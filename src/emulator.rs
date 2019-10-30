@@ -9,6 +9,7 @@ use std::marker::PhantomData;
 use std::panic;
 use std::path::Path;
 use std::ptr;
+use crate::buttons::Buttons;
 
 type NotSendSync = *const [u8; 0];
 
@@ -25,7 +26,7 @@ struct EmulatorCore {
 
 struct EmulatorContext {
     audio_sample: Vec<i16>,
-    buttons: Vec<i16>,
+    buttons: Buttons,
     frame_ptr: *const c_void,
     frame_pitch: usize,
     frame_width: u32,
@@ -132,7 +133,7 @@ impl Emulator {
             // Forget the box so it doesn't drop
             let ctx = EmulatorContext {
                 audio_sample: Vec::new(),
-                buttons: Vec::new(),
+                buttons: Buttons::new(),
                 frame_ptr: ptr::null(),
                 frame_pitch: 0,
                 frame_width: 0,
@@ -195,13 +196,12 @@ impl Emulator {
             }
         }
     }
-    pub fn run(&mut self, inputs: &[i16]) {
+    pub fn run(&mut self, inputs: Buttons) {
         unsafe {
             //clear audio buffers and whatever else
             (*CONTEXT).audio_sample.clear();
             //set inputs on CB
-            (*CONTEXT).buttons.clear();
-            (*CONTEXT).buttons.extend_from_slice(inputs);
+            (*CONTEXT).buttons = inputs;
             //run one step
             ((*EMULATOR).core.retro_run)()
         }
@@ -211,7 +211,7 @@ impl Emulator {
             //clear audio buffers and whatever else
             (*CONTEXT).audio_sample.clear();
             //clear inputs on CB
-            (*CONTEXT).buttons.clear();
+            (*CONTEXT).buttons = Buttons::new();
             //clear fb
             (*CONTEXT).frame_ptr = ptr::null();
             ((*EMULATOR).core.retro_reset)()
@@ -408,12 +408,11 @@ extern "C" fn callback_input_state(port: u32, device: u32, index: u32, id: u32) 
     }
     unsafe {
         let id = id as usize;
-        let btn_count = (*CONTEXT).buttons.len();
-        if btn_count <= id {
+        if id > 16 {
             print!("Unexpected button id {}", id);
             return 0;
         }
-        (*CONTEXT).buttons[id]
+        (*CONTEXT).buttons.get(id)
     }
 }
 
@@ -474,13 +473,13 @@ mod tests {
             Path::new("roms/mario.nes"),
         );
         for _ in 0..100 {
-            emu.run(&[0; 8]);
+            emu.run(Buttons::new());
         }
         let fb = emu.create_imagebuffer();
         fb.unwrap().save("out.png").unwrap();
         emu.reset();
         for _ in 0..100 {
-            emu.run(&[0; 8]);
+            emu.run(Buttons::new());
         }
         //emu will drop naturally
     }

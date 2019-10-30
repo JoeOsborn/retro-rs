@@ -1,3 +1,5 @@
+mod buttons;
+pub use buttons::Buttons;
 mod emulator;
 pub use emulator::Emulator;
 mod error;
