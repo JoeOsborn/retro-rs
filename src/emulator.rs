@@ -275,7 +275,7 @@ impl Emulator {
             )
         }
     }
-    pub fn copy_framebuffer(&self, slice: &mut [u8]) -> Result<(), RetroRsError> {
+    pub fn copy_framebuffer_rgb888(&self, slice: &mut [u8]) -> Result<(), RetroRsError> {
         let (w, h) = self.framebuffer_size();
         let fmt = self.pixel_format();
         self.peek_framebuffer(|fb| {
@@ -315,6 +315,55 @@ impl Emulator {
                             slice[start * 3] = red;
                             slice[start * 3 + 1] = green;
                             slice[start * 3 + 2] = blue;
+                        }
+                    }
+                }
+            };
+            Result::Ok(())
+        })
+    }
+    pub fn copy_framebuffer_argb32(&self, slice: &mut [u32]) -> Result<(), RetroRsError> {
+        let (w, h) = self.framebuffer_size();
+        let fmt = self.pixel_format();
+        self.peek_framebuffer(|fb| {
+            let fb = fb.ok_or(RetroRsError::NoFramebufferError)?;
+            match fmt {
+                PixelFormat::ARGB1555 => {
+                    for y in 0..h {
+                        for x in 0..w {
+                            let start = y * w + x;
+                            let gb = fb[start * 2];
+                            let arg = fb[start * 2 + 1];
+                            let (red, green, blue) = argb555to888(gb, arg);
+                            let red = red as u32;
+                            let green = green as u32;
+                            let blue = blue as u32;
+                            slice[start] = 0xFF00_0000 | (red << 16) | (green << 8) | blue;
+                        }
+                    }
+                }
+                PixelFormat::ARGB8888 => {
+                    for y in 0..h {
+                        for x in 0..w {
+                            let off = (y * w + x)*4;
+                            let red = fb[off+1] as u32;
+                            let green = fb[off+2] as u32;
+                            let blue = fb[off+3] as u32;
+                            slice[y*w+x] = 0xFF00_0000 | (red << 16) | (green << 8) | blue;
+                        }
+                    }
+                }
+                PixelFormat::RGB565 => {
+                    for y in 0..h {
+                        for x in 0..w {
+                            let start = y * w + x;
+                            let gb = fb[start * 2];
+                            let rg = fb[start * 2 + 1];
+                            let (red, green, blue) = rgb565to888(gb, rg);
+                            let red = red as u32;
+                            let green = green as u32;
+                            let blue = blue as u32;
+                            slice[start] = 0xFF00_0000 | (red << 16) | (green << 8) | blue;
                         }
                     }
                 }
