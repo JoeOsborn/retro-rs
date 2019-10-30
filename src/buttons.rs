@@ -17,16 +17,14 @@ use libretro_sys::{
     DEVICE_ID_JOYPAD_R3
 };
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Buttons(i16);
 
 impl Buttons {
-    pub fn new() -> Self {
-        Buttons(0)
-    }
-    pub fn get(&self, id:usize) -> i16 {
+    pub fn new() -> Self { Buttons::default() }
+    pub fn get(self, id:usize) -> bool {
         assert!(id < 16);
-        (self.0 >> id) & 0x01
+        (self.0 & (1 << id)) != 0
     }
     fn mask_inout(self, b:bool, id:u32) -> Self {
         assert!(id < 16);

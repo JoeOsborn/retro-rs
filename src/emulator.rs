@@ -26,7 +26,7 @@ struct EmulatorCore {
 
 struct EmulatorContext {
     audio_sample: Vec<i16>,
-    buttons: Buttons,
+    buttons: [Buttons;2],
     frame_ptr: *const c_void,
     frame_pitch: usize,
     frame_width: u32,
@@ -133,7 +133,7 @@ impl Emulator {
             // Forget the box so it doesn't drop
             let ctx = EmulatorContext {
                 audio_sample: Vec::new(),
-                buttons: Buttons::new(),
+                buttons: [Buttons::new(),Buttons::new()],
                 frame_ptr: ptr::null(),
                 frame_pitch: 0,
                 frame_width: 0,
@@ -196,7 +196,7 @@ impl Emulator {
             }
         }
     }
-    pub fn run(&mut self, inputs: Buttons) {
+    pub fn run(&mut self, inputs: [Buttons;2]) {
         unsafe {
             //clear audio buffers and whatever else
             (*CONTEXT).audio_sample.clear();
@@ -211,7 +211,7 @@ impl Emulator {
             //clear audio buffers and whatever else
             (*CONTEXT).audio_sample.clear();
             //clear inputs on CB
-            (*CONTEXT).buttons = Buttons::new();
+            (*CONTEXT).buttons = [Buttons::new(), Buttons::new()];
             //clear fb
             (*CONTEXT).frame_ptr = ptr::null();
             ((*EMULATOR).core.retro_reset)()
@@ -327,6 +327,9 @@ impl Emulator {
 unsafe extern "C" fn callback_environment(cmd: u32, data: *mut c_void) -> bool {
     let result = panic::catch_unwind(|| {
         match cmd {
+            ENVIRONMENT_SET_CONTROLLER_INFO => {
+                true
+            },
             ENVIRONMENT_SET_PIXEL_FORMAT => {
                 let pixfmti = *(data as *const u32);
                 let pixfmt = PixelFormat::from_uint(pixfmti);
@@ -337,11 +340,11 @@ unsafe extern "C" fn callback_environment(cmd: u32, data: *mut c_void) -> bool {
                 (*CONTEXT).image_depth = match pixfmt {
                     PixelFormat::ARGB1555 => 15,
                     PixelFormat::ARGB8888 => 32,
-                    PixelFormat::RGB565 => 16,
-                };
-                (*CONTEXT).pixfmt = pixfmt;
-                true
-            }
+                        PixelFormat::RGB565 => 16,
+                    };
+                    (*CONTEXT).pixfmt = pixfmt;
+                    true
+                }
             ENVIRONMENT_GET_SYSTEM_DIRECTORY => {
                 *(data as *mut *const c_char) = (*EMULATOR).core_path.as_ptr();
                 true
@@ -398,21 +401,26 @@ extern "C" fn callback_audio_sample_batch(data: *const i16, frames: usize) -> us
     }
 }
 
-extern "C" fn callback_input_poll() {}
+extern "C" fn callback_input_poll() {
+
+}
 
 extern "C" fn callback_input_state(port: u32, device: u32, index: u32, id: u32) -> i16 {
     // Can't panic
-    if port != 0 || device != 0 || index != 0 {
+    if port > 1 || device != 1 || index != 0 {
         // Unsupported port/device/index
+        println!("Unsupported port/device/index");
+        return 0;
+    }
+    let id = id as usize;
+    let port = port as usize;
+    if id > 16 {
+        println!("Unexpected button id {}", id);
         return 0;
     }
     unsafe {
-        let id = id as usize;
-        if id > 16 {
-            print!("Unexpected button id {}", id);
-            return 0;
-        }
-        (*CONTEXT).buttons.get(id)
+        if (*CONTEXT).buttons[port].get(id) { 1 }
+        else { 0 }
     }
 }
 
@@ -472,14 +480,18 @@ mod tests {
             Path::new("cores/fceumm_libretro"),
             Path::new("roms/mario.nes"),
         );
-        for _ in 0..100 {
-            emu.run(Buttons::new());
+        for i in 0..250 {
+            emu.run([Buttons::new()
+                     .start(i > 80 && i < 100)
+                     .right(i >= 100)
+                     .a((i >= 100 && i <= 150) || (i >= 180)),
+                     Buttons::new()]);
         }
         let fb = emu.create_imagebuffer();
         fb.unwrap().save("out.png").unwrap();
         emu.reset();
         for _ in 0..100 {
-            emu.run(Buttons::new());
+            emu.run([Buttons::new(),Buttons::new()]);
         }
         //emu will drop naturally
     }
