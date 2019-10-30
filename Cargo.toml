@@ -3,6 +3,8 @@ name = "retro"
 version = "0.1.0"
 authors = ["Joseph C. Osborn <joseph.osborn@pomona.edu>"]
 edition = "2018"
+description = "A Rust front-end for libretro cores."
+license = "Apache-2.0"
 
 [dependencies]
 libloading = "0.5"
