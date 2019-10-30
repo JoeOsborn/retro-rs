@@ -1,0 +1,5 @@
+A little libretro frontend library for automated control.
+
+* Usage
+
+This crate is not packaged with any cores.  You'll want to download the cores (e.g. from [[https://buildbot.libretro.com/nightly][libretro's buildbot]]) and point the API to them.  I do not recommend loading multiple cores or one core multiple times in a single OS process, since libretro's API doesn't seem to make any guarantees about thread safety of emulator cores.
