@@ -5,6 +5,7 @@ authors = ["Joseph C. Osborn <joseph.osborn@pomona.edu>"]
 edition = "2018"
 description = "A Rust front-end for libretro cores."
 license = "Apache-2.0"
+repository = "https://github.com/JoeOsborn/retro-rs"
 
 [dependencies]
 libloading = "0.5"
