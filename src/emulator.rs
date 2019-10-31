@@ -1,3 +1,4 @@
+use crate::buttons::Buttons;
 use crate::error::*;
 use libc::c_char;
 use libloading::Library;
@@ -9,7 +10,6 @@ use std::marker::PhantomData;
 use std::panic;
 use std::path::Path;
 use std::ptr;
-use crate::buttons::Buttons;
 
 type NotSendSync = *const [u8; 0];
 
@@ -26,7 +26,7 @@ struct EmulatorCore {
 
 struct EmulatorContext {
     audio_sample: Vec<i16>,
-    buttons: [Buttons;2],
+    buttons: [Buttons; 2],
     frame_ptr: *const c_void,
     frame_pitch: usize,
     frame_width: u32,
@@ -133,7 +133,7 @@ impl Emulator {
             // Forget the box so it doesn't drop
             let ctx = EmulatorContext {
                 audio_sample: Vec::new(),
-                buttons: [Buttons::new(),Buttons::new()],
+                buttons: [Buttons::new(), Buttons::new()],
                 frame_ptr: ptr::null(),
                 frame_pitch: 0,
                 frame_width: 0,
@@ -196,7 +196,7 @@ impl Emulator {
             }
         }
     }
-    pub fn run(&mut self, inputs: [Buttons;2]) {
+    pub fn run(&mut self, inputs: [Buttons; 2]) {
         unsafe {
             //clear audio buffers and whatever else
             (*CONTEXT).audio_sample.clear();
@@ -275,10 +275,13 @@ impl Emulator {
             )
         }
     }
-    pub fn copy_framebuffer_rgb888(&self, slice: &mut [u8]) -> Result<(), RetroRsError> {
+    pub fn for_each_pixel(
+        &self,
+        mut f: impl FnMut(usize, usize, u8, u8, u8),
+    ) -> Result<(), RetroRsError> {
         let (w, h) = self.framebuffer_size();
         let fmt = self.pixel_format();
-        self.peek_framebuffer(|fb| {
+        self.peek_framebuffer(move |fb| {
             let fb = fb.ok_or(RetroRsError::NoFramebufferError)?;
             match fmt {
                 PixelFormat::ARGB1555 => {
@@ -288,10 +291,7 @@ impl Emulator {
                             let gb = fb[start * 2];
                             let arg = fb[start * 2 + 1];
                             let (red, green, blue) = argb555to888(gb, arg);
-
-                            slice[start * 3] = red;
-                            slice[start * 3 + 1] = green;
-                            slice[start * 3 + 2] = blue;
+                            f(x, y, red, green, blue);
                         }
                     }
                 }
@@ -299,9 +299,7 @@ impl Emulator {
                     for y in 0..h {
                         for x in 0..w {
                             let off = (y * w + x) * 4;
-                            slice[off] = fb[off + 1];
-                            slice[off + 1] = fb[off + 2];
-                            slice[off + 2] = fb[off + 3];
+                            f(x, y, fb[off + 1], fb[off + 2], fb[off + 3])
                         }
                     }
                 }
@@ -312,9 +310,7 @@ impl Emulator {
                             let gb = fb[start * 2];
                             let rg = fb[start * 2 + 1];
                             let (red, green, blue) = rgb565to888(gb, rg);
-                            slice[start * 3] = red;
-                            slice[start * 3 + 1] = green;
-                            slice[start * 3 + 2] = blue;
+                            f(x, y, red, green, blue);
                         }
                     }
                 }
@@ -322,53 +318,20 @@ impl Emulator {
             Result::Ok(())
         })
     }
+    pub fn copy_framebuffer_rgb888(&self, slice: &mut [u8]) -> Result<(), RetroRsError> {
+        let (width, _height) = self.framebuffer_size();
+        self.for_each_pixel(|x, y, red, green, blue| {
+            let start = y * width + x;
+            slice[start * 3] = red;
+            slice[start * 3 + 1] = green;
+            slice[start * 3 + 2] = blue;
+        })
+    }
     pub fn copy_framebuffer_argb32(&self, slice: &mut [u32]) -> Result<(), RetroRsError> {
-        let (w, h) = self.framebuffer_size();
-        let fmt = self.pixel_format();
-        self.peek_framebuffer(|fb| {
-            let fb = fb.ok_or(RetroRsError::NoFramebufferError)?;
-            match fmt {
-                PixelFormat::ARGB1555 => {
-                    for y in 0..h {
-                        for x in 0..w {
-                            let start = y * w + x;
-                            let gb = fb[start * 2];
-                            let arg = fb[start * 2 + 1];
-                            let (red, green, blue) = argb555to888(gb, arg);
-                            let red = red as u32;
-                            let green = green as u32;
-                            let blue = blue as u32;
-                            slice[start] = 0xFF00_0000 | (red << 16) | (green << 8) | blue;
-                        }
-                    }
-                }
-                PixelFormat::ARGB8888 => {
-                    for y in 0..h {
-                        for x in 0..w {
-                            let off = (y * w + x)*4;
-                            let red = fb[off+1] as u32;
-                            let green = fb[off+2] as u32;
-                            let blue = fb[off+3] as u32;
-                            slice[y*w+x] = 0xFF00_0000 | (red << 16) | (green << 8) | blue;
-                        }
-                    }
-                }
-                PixelFormat::RGB565 => {
-                    for y in 0..h {
-                        for x in 0..w {
-                            let start = y * w + x;
-                            let gb = fb[start * 2];
-                            let rg = fb[start * 2 + 1];
-                            let (red, green, blue) = rgb565to888(gb, rg);
-                            let red = red as u32;
-                            let green = green as u32;
-                            let blue = blue as u32;
-                            slice[start] = 0xFF00_0000 | (red << 16) | (green << 8) | blue;
-                        }
-                    }
-                }
-            };
-            Result::Ok(())
+        let (width, _height) = self.framebuffer_size();
+        self.for_each_pixel(|x, y, r, g, b| {
+            slice[y * width + x] =
+                0xFF00_0000 | (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b);
         })
     }
 }
@@ -376,9 +339,7 @@ impl Emulator {
 unsafe extern "C" fn callback_environment(cmd: u32, data: *mut c_void) -> bool {
     let result = panic::catch_unwind(|| {
         match cmd {
-            ENVIRONMENT_SET_CONTROLLER_INFO => {
-                true
-            },
+            ENVIRONMENT_SET_CONTROLLER_INFO => true,
             ENVIRONMENT_SET_PIXEL_FORMAT => {
                 let pixfmti = *(data as *const u32);
                 let pixfmt = PixelFormat::from_uint(pixfmti);
@@ -389,11 +350,11 @@ unsafe extern "C" fn callback_environment(cmd: u32, data: *mut c_void) -> bool {
                 (*CONTEXT).image_depth = match pixfmt {
                     PixelFormat::ARGB1555 => 15,
                     PixelFormat::ARGB8888 => 32,
-                        PixelFormat::RGB565 => 16,
-                    };
-                    (*CONTEXT).pixfmt = pixfmt;
-                    true
-                }
+                    PixelFormat::RGB565 => 16,
+                };
+                (*CONTEXT).pixfmt = pixfmt;
+                true
+            }
             ENVIRONMENT_GET_SYSTEM_DIRECTORY => {
                 *(data as *mut *const c_char) = (*EMULATOR).core_path.as_ptr();
                 true
@@ -450,9 +411,7 @@ extern "C" fn callback_audio_sample_batch(data: *const i16, frames: usize) -> us
     }
 }
 
-extern "C" fn callback_input_poll() {
-
-}
+extern "C" fn callback_input_poll() {}
 
 extern "C" fn callback_input_state(port: u32, device: u32, index: u32, id: u32) -> i16 {
     // Can't panic
@@ -468,8 +427,11 @@ extern "C" fn callback_input_state(port: u32, device: u32, index: u32, id: u32) 
         return 0;
     }
     unsafe {
-        if (*CONTEXT).buttons[port].get(id) { 1 }
-        else { 0 }
+        if (*CONTEXT).buttons[port].get(id) {
+            1
+        } else {
+            0
+        }
     }
 }
 
@@ -530,17 +492,19 @@ mod tests {
             Path::new("roms/mario.nes"),
         );
         for i in 0..250 {
-            emu.run([Buttons::new()
-                     .start(i > 80 && i < 100)
-                     .right(i >= 100)
-                     .a((i >= 100 && i <= 150) || (i >= 180)),
-                     Buttons::new()]);
+            emu.run([
+                Buttons::new()
+                    .start(i > 80 && i < 100)
+                    .right(i >= 100)
+                    .a((i >= 100 && i <= 150) || (i >= 180)),
+                Buttons::new(),
+            ]);
         }
         let fb = emu.create_imagebuffer();
         fb.unwrap().save("out.png").unwrap();
         emu.reset();
         for _ in 0..100 {
-            emu.run([Buttons::new(),Buttons::new()]);
+            emu.run([Buttons::new(), Buttons::new()]);
         }
         //emu will drop naturally
     }
