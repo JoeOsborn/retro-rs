@@ -217,16 +217,55 @@ impl Emulator {
             ((*EMULATOR).core.retro_reset)()
         }
     }
+    fn get_ram_size(&self, rtype:libc::c_uint) -> usize {
+        unsafe {
+            ((*EMULATOR).core.retro_get_memory_size)(rtype) as usize
+        }
+    }
+    pub fn get_video_ram_size(&self) -> usize {
+        self.get_ram_size(MEMORY_VIDEO_RAM)
+    }
+    pub fn get_system_ram_size(&self) -> usize {
+        self.get_ram_size(MEMORY_SYSTEM_RAM)
+    }
+    pub fn get_save_ram_size(&self) -> usize {
+        self.get_ram_size(MEMORY_SAVE_RAM)
+    }
+    pub fn get_video_ram(&self, from:usize, len:usize, into:&mut [u8]) -> Result<(), RetroRsError> {
+        self.get_ram(MEMORY_VIDEO_RAM, from, len, into)
+    }
+    pub fn get_system_ram(&self, from:usize, len:usize, into:&mut [u8]) -> Result<(), RetroRsError> {
+        self.get_ram(MEMORY_SYSTEM_RAM, from, len, into)
+    }
+    pub fn get_save_ram(&self, from:usize, len:usize, into:&mut [u8]) -> Result<(), RetroRsError> {
+        self.get_ram(MEMORY_SAVE_RAM, from, len, into)
+    }
+    fn get_ram(&self, ramtype:libc::c_uint, from:usize, len:usize, into:&mut [u8]) -> Result<(), RetroRsError> {
+        if len > into.len() {
+            return Err(RetroRsError::RAMCopyDestTooSmallError);
+        }
+        if from+len > self.get_ram_size(ramtype) {
+            return Err(RetroRsError::RAMCopySrcOutOfBoundsError);
+        }
+        let slice = unsafe {
+            let ptr:*const u8 = ((*EMULATOR).core.retro_get_memory_data)(ramtype).cast();
+            let ptr = ptr.add(from);
+            std::slice::from_raw_parts(ptr, len)
+        };
+        into.copy_from_slice(slice);
+        Ok(())
+    }
+
     pub fn pixel_format(&self) -> PixelFormat {
         unsafe { (*CONTEXT).pixfmt }
     }
     pub fn framebuffer_size(&self) -> (usize, usize) {
         unsafe {
-            (
-                (*CONTEXT).frame_width as usize,
-                (*CONTEXT).frame_height as usize,
-            )
-        }
+                (
+                    (*CONTEXT).frame_width as usize,
+                    (*CONTEXT).frame_height as usize,
+                )
+            }
     }
     pub fn framebuffer_pitch(&self) -> usize {
         unsafe { (*CONTEXT).frame_pitch }
@@ -484,6 +523,13 @@ mod tests {
     #[cfg(feature = "use_image")]
     use crate::fb_to_image::*;
 
+    
+    fn mario_is_dead(emu:&Emulator) -> bool {
+        let mut buf = [0];
+        emu.get_system_ram(0x0770, 1, &mut buf).expect("Couldn't read RAM!");
+        buf[0] == 0x03
+    }
+
     #[cfg(feature = "use_image")]
     #[test]
     fn it_works() {
@@ -502,10 +548,28 @@ mod tests {
         }
         let fb = emu.create_imagebuffer();
         fb.unwrap().save("out.png").unwrap();
-        emu.reset();
-        for _ in 0..100 {
-            emu.run([Buttons::new(), Buttons::new()]);
+        let mut died = false;
+        for _ in 0..10000 {
+            emu.run([Buttons::new().right(true), Buttons::new()]);
+            if mario_is_dead(&emu) {
+                died = true;
+                let fb = emu.create_imagebuffer();
+                fb.unwrap().save("out2.png").unwrap();
+                break;
+            }
         }
+        assert!(died);
+        emu.reset();
+        for i in 0..250 {
+            emu.run([
+                Buttons::new()
+                    .start(i > 80 && i < 100)
+                    .right(i >= 100)
+                    .a((i >= 100 && i <= 150) || (i >= 180)),
+                Buttons::new(),
+            ]);
+        }
+
         //emu will drop naturally
     }
 }
