@@ -6,7 +6,10 @@ pub enum RetroRsError {
     ImageBufferError,
     TryFromIntError(std::num::TryFromIntError),
     RAMCopyDestTooSmallError,
-    RAMCopySrcOutOfBoundsError
+    RAMCopySrcOutOfBoundsError,
+    RAMMapOutOfRangeError,
+    RAMCopyCrossedRegionError,
+    RAMCopyNotMappedIntoMemoryRegionError,
 }
 impl From<std::num::TryFromIntError> for RetroRsError {
     fn from(err: std::num::TryFromIntError) -> RetroRsError {
@@ -21,8 +24,21 @@ impl Display for RetroRsError {
             }
             RetroRsError::ImageBufferError => write!(f, "Failure in creating image buffer"),
             RetroRsError::TryFromIntError(ref err) => err.fmt(f),
-            RetroRsError::RAMCopyDestTooSmallError => write!(f, "Destination for RAM copy too small"),
-            RetroRsError::RAMCopySrcOutOfBoundsError => write!(f, "Source address range for RAM copy out of bounds")
+            RetroRsError::RAMCopyDestTooSmallError => {
+                write!(f, "Destination for RAM copy too small")
+            }
+            RetroRsError::RAMCopySrcOutOfBoundsError => {
+                write!(f, "Source address range for RAM copy out of bounds")
+            }
+            RetroRsError::RAMMapOutOfRangeError => {
+                write!(f, "Given memory map is not valid for this core")
+            }
+            RetroRsError::RAMCopyCrossedRegionError => {
+                write!(f, "RAM copy crossed over memory region boundaries")
+            }
+            RetroRsError::RAMCopyNotMappedIntoMemoryRegionError => {
+                write!(f, "RAM copy doesn't start within a memory region")
+            }
         }
     }
 }
