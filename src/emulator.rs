@@ -298,8 +298,8 @@ impl Emulator {
                 len: mdesc.len,
                 start: mdesc.start,
                 offset: mdesc.offset,
-                select: 0,
-                disconnect: 0,
+                select: mdesc.select,
+                disconnect: mdesc.disconnect,
                 name: if mdesc.addrspace.is_null() {
                     "".to_owned()
                 } else {
@@ -383,9 +383,7 @@ impl Emulator {
             } else {
                 let frame_slice = std::slice::from_raw_parts(
                     (*CONTEXT).frame_ptr as *const u8,
-                    ((*CONTEXT).frame_width
-                        * (*CONTEXT).frame_height
-                        * ((*CONTEXT).frame_pitch as u32)) as usize,
+                    ((*CONTEXT).frame_height * ((*CONTEXT).frame_pitch as u32)) as usize,
                 );
                 f(Some(frame_slice))
             }
