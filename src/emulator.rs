@@ -70,7 +70,6 @@ impl Emulator {
         } else {
             panic!("Unsupported platform")
         };
-        println!("CP:{}", core_path.to_str().unwrap());
         let dll = Library::new(core_path.with_extension(suffix)).unwrap();
         unsafe {
             let retro_set_environment = *(dll.get(b"retro_set_environment").unwrap());
@@ -317,7 +316,7 @@ impl Emulator {
         into: &mut [u8],
     ) -> Result<(), RetroRsError> {
         for mr in self.memory_regions() {
-            if (start & mr.select) == 0 {
+            if mr.select != 0 && (start & mr.select) == 0 {
                 continue;
             }
             if start >= mr.start && start < mr.start + mr.len {
@@ -631,6 +630,14 @@ mod tests {
         buf[0] == 0x03
     }
 
+    const PPU_BIT:usize = 1 << 31;
+
+    fn get_byte(emu:&Emulator, addr:usize) -> u8 {
+        let mut out = [0];
+        emu.get_memory_addr(addr, 1, &mut out).expect("Couldn't read RAM!");
+        out[0]
+    }
+
     #[cfg(feature = "use_image")]
     #[test]
     fn it_works() {
@@ -648,6 +655,15 @@ mod tests {
                 Buttons::new(),
             ]);
         }
+        for mr in emu.memory_regions() {
+            dbg!(mr);
+        }
+
+        dbg!(get_byte(&emu, 0x2000));
+        dbg!(get_byte(&emu, 0x2000|PPU_BIT));
+        dbg!(get_byte(&emu, 0x3000|PPU_BIT));
+        dbg!(get_byte(&emu, 0x4000|PPU_BIT));
+
         let fb = emu.create_imagebuffer();
         fb.unwrap().save("out.png").unwrap();
         let mut died = false;
