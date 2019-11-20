@@ -38,7 +38,7 @@ struct EmulatorContext {
 }
 
 // A more pleasant wrapper over MemoryDescriptor
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MemoryRegion {
     which: usize,
     pub flags: u64,
