@@ -1,3 +1,4 @@
+use libloading::Symbol;
 use crate::buttons::Buttons;
 use crate::error::*;
 use libc::c_char;
@@ -8,7 +9,7 @@ use std::fs::File;
 use std::io::Read;
 use std::marker::PhantomData;
 use std::panic;
-use std::path::Path;
+use std::path::{Path,PathBuf};
 use std::ptr;
 
 type NotSendSync = *const [u8; 0];
@@ -17,7 +18,7 @@ static mut EMULATOR: *mut EmulatorCore = ptr::null_mut();
 static mut CONTEXT: *mut EmulatorContext = ptr::null_mut();
 
 struct EmulatorCore {
-    core_lib: Library,
+    core_lib: Box<Library>,
     core_path: CString,
     rom_path: CString,
     core: CoreAPI,
@@ -70,7 +71,15 @@ impl Emulator {
         } else {
             panic!("Unsupported platform")
         };
-        let dll = Library::new(core_path.with_extension(suffix)).unwrap();
+        let path:PathBuf = core_path.with_extension(suffix);
+        #[cfg(target_os = "linux")]
+        let library: Library = {
+            // Load library with `RTLD_NOW | RTLD_NODELETE` to fix a SIGSEGV
+            ::libloading::os::unix::Library::open(Some(path), 0x2 | 0x1000).unwrap().into()
+        };
+        #[cfg(not(target_os = "linux"))]
+        let library = Library::new(path.as_ref()).unwrap();
+        let dll = Box::new(library);
         unsafe {
             let retro_set_environment = *(dll.get(b"retro_set_environment").unwrap());
             let retro_set_video_refresh = *(dll.get(b"retro_set_video_refresh").unwrap());
@@ -207,6 +216,19 @@ impl Emulator {
                 phantom: PhantomData,
             }
         }
+    }
+    pub fn get_library(&mut self) -> &Library {
+        unsafe {
+            &(*EMULATOR).core_lib
+        }
+    }
+    pub fn get_symbol<'a, T>(&'a self, symbol:&[u8]) -> Option<Symbol<'a, T>> {
+        let dll = unsafe { &(*EMULATOR).core_lib };
+        let sym:Result<Symbol<T>,_> = unsafe { dll.get(symbol) };
+        if sym.is_err() {
+            return None;
+        }
+        Some(sym.unwrap())
     }
     pub fn run(&mut self, inputs: [Buttons; 2]) {
         unsafe {
@@ -372,22 +394,23 @@ impl Emulator {
     pub fn framebuffer_pitch(&self) -> usize {
         unsafe { (*CONTEXT).frame_pitch }
     }
-    pub fn peek_framebuffer<FBPeek, FBPeekRet>(&self, f: FBPeek) -> FBPeekRet
+    pub fn peek_framebuffer<FBPeek, FBPeekRet>(&self, f: FBPeek) -> Result<FBPeekRet, RetroRsError>
     where
-        FBPeek: FnOnce(Option<&[u8]>) -> FBPeekRet,
+        FBPeek: FnOnce(&[u8]) -> FBPeekRet,
     {
         unsafe {
             if (*CONTEXT).frame_ptr.is_null() {
-                f(None)
+                Err(RetroRsError::NoFramebufferError)
             } else {
                 let frame_slice = std::slice::from_raw_parts(
                     (*CONTEXT).frame_ptr as *const u8,
                     ((*CONTEXT).frame_height * ((*CONTEXT).frame_pitch as u32)) as usize,
                 );
-                f(Some(frame_slice))
+                Ok(f(frame_slice))
             }
         }
     }
+
     pub fn save(&self, bytes: &mut [u8]) {
         let size = self.save_size();
         assert!(bytes.len() >= size);
@@ -414,6 +437,31 @@ impl Emulator {
             )
         }
     }
+    pub fn get_pixel(&self, x:usize, y:usize) -> Result<(u8, u8, u8), RetroRsError> {
+        let (w,_h) = self.framebuffer_size();
+        self.peek_framebuffer(move |fb| {
+            match self.pixel_format() {
+                PixelFormat::ARGB1555 => {
+                    let start = y * w + x;
+                    let gb = fb[start * 2];
+                    let arg = fb[start * 2 + 1];
+                    let (red, green, blue) = argb555to888(gb, arg);
+                    (red, green, blue)
+                },
+                PixelFormat::ARGB8888 => {
+                    let off = (y * w + x) * 4;
+                    (fb[off + 1], fb[off + 2], fb[off + 3])
+                },
+                PixelFormat::RGB565 => {
+                    let start = y * w + x;
+                    let gb = fb[start * 2];
+                    let rg = fb[start * 2 + 1];
+                    let (red, green, blue) = rgb565to888(gb, rg);
+                    (red, green, blue)
+                }
+            }
+        })
+    }
     pub fn for_each_pixel(
         &self,
         mut f: impl FnMut(usize, usize, u8, u8, u8),
@@ -421,56 +469,116 @@ impl Emulator {
         let (w, h) = self.framebuffer_size();
         let fmt = self.pixel_format();
         self.peek_framebuffer(move |fb| {
-            let fb = fb.ok_or(RetroRsError::NoFramebufferError)?;
+            let mut x = 0;
+            let mut y = 0;
             match fmt {
                 PixelFormat::ARGB1555 => {
-                    for y in 0..h {
-                        for x in 0..w {
-                            let start = y * w + x;
-                            let gb = fb[start * 2];
-                            let arg = fb[start * 2 + 1];
-                            let (red, green, blue) = argb555to888(gb, arg);
-                            f(x, y, red, green, blue);
+                    for components in fb.chunks_exact(2) {
+                        let gb = components[0];
+                        let arg = components[1];
+                        let (red, green, blue) = argb555to888(gb, arg);
+                        f(x, y, red, green, blue);
+                        x += 1;
+                        if x >= w {
+                            y += 1;
+                            x = 0;
                         }
                     }
                 }
                 PixelFormat::ARGB8888 => {
-                    for y in 0..h {
-                        for x in 0..w {
-                            let off = (y * w + x) * 4;
-                            f(x, y, fb[off + 1], fb[off + 2], fb[off + 3])
+                    for components in fb.chunks_exact(4) {
+                        let red = components[1];
+                        let green = components[2];
+                        let blue = components[3];
+                        f(x, y, red, green, blue);
+                        x += 1;
+                        if x >= w {
+                            y += 1;
+                            x = 0;
                         }
                     }
                 }
                 PixelFormat::RGB565 => {
-                    for y in 0..h {
-                        for x in 0..w {
-                            let start = y * w + x;
-                            let gb = fb[start * 2];
-                            let rg = fb[start * 2 + 1];
-                            let (red, green, blue) = rgb565to888(gb, rg);
-                            f(x, y, red, green, blue);
+                    for components in fb.chunks_exact(2) {
+                        let gb = components[0];
+                        let rg = components[1];
+                        let (red, green, blue) = rgb565to888(gb, rg);
+                        f(x, y, red, green, blue);
+                        x += 1;
+                        if x >= w {
+                            y += 1;
+                            x = 0;
                         }
                     }
                 }
             };
-            Result::Ok(())
+            assert_eq!(y, h);
+            assert_eq!(x, 0);
         })
     }
     pub fn copy_framebuffer_rgb888(&self, slice: &mut [u8]) -> Result<(), RetroRsError> {
-        let (width, _height) = self.framebuffer_size();
-        self.for_each_pixel(|x, y, red, green, blue| {
-            let start = y * width + x;
-            slice[start * 3] = red;
-            slice[start * 3 + 1] = green;
-            slice[start * 3 + 2] = blue;
+        let fmt = self.pixel_format();
+        self.peek_framebuffer(move |fb| {
+            match fmt {
+                PixelFormat::ARGB1555 => {
+                    for (components,dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(3)) {
+                        let gb = components[0];
+                        let arg = components[1];
+                        let (red, green, blue) = argb555to888(gb, arg);
+                        dst[0] = red;
+                        dst[1] = green;
+                        dst[2] = blue;
+                    }
+                }
+                PixelFormat::ARGB8888 => {
+                    for (components,dst) in fb.chunks_exact(4).zip(slice.chunks_exact_mut(3)) {
+                        let r = components[1];
+                        let g = components[2];
+                        let b = components[3];
+                        dst[0] = r;
+                        dst[1] = g;
+                        dst[2] = b;
+                    }
+                }
+                PixelFormat::RGB565 => {
+                    for (components,dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(3)) {
+                        let gb = components[0];
+                        let rg = components[1];
+                        let (red, green, blue) = rgb565to888(gb, rg);
+                        dst[0] = red;
+                        dst[1] = green;
+                        dst[2] = blue;
+                    }
+                }
+            };
         })
     }
     pub fn copy_framebuffer_argb32(&self, slice: &mut [u32]) -> Result<(), RetroRsError> {
-        let (width, _height) = self.framebuffer_size();
-        self.for_each_pixel(|x, y, r, g, b| {
-            slice[y * width + x] =
-                0xFF00_0000 | (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b);
+        let fmt = self.pixel_format();
+        self.peek_framebuffer(move |fb| {
+            match fmt {
+                PixelFormat::ARGB1555 => {
+                    for (components,dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
+                        let gb = components[0];
+                        let arg = components[1];
+                        let (red, green, blue) = argb555to888(gb, arg);
+                        *dst = 0xFF00_0000 | (u32::from(red) << 16) | (u32::from(green) << 8) | u32::from(blue);
+                    }
+                }
+                PixelFormat::ARGB8888 => {
+                    for (components,dst) in fb.chunks_exact(4).zip(slice.iter_mut()) {
+                        *dst = (u32::from(components[0]) << 24) | (u32::from(components[1]) << 16) | (u32::from(components[2]) << 8) | u32::from(components[3]);
+                    }
+                }
+                PixelFormat::RGB565 => {
+                    for (components,dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
+                        let gb = components[0];
+                        let rg = components[1];
+                        let (red, green, blue) = rgb565to888(gb, rg);
+                        *dst = 0xFF00_0000 | (u32::from(red) << 16) | (u32::from(green) << 8) | u32::from(blue);
+                    }
+                }
+            };
         })
     }
 }
@@ -559,7 +667,7 @@ extern "C" fn callback_input_state(port: u32, device: u32, index: u32, id: u32) 
         println!("Unsupported port/device/index");
         return 0;
     }
-    let id = id as usize;
+    let id = id;
     let port = port as usize;
     if id > 16 {
         println!("Unexpected button id {}", id);
@@ -592,6 +700,7 @@ impl Drop for Emulator {
     }
 }
 
+#[inline(always)]
 pub fn argb555to888(lo: u8, hi: u8) -> (u8, u8, u8) {
     let r = (hi & 0b0111_1100) >> 2;
     let g = ((hi & 0b0000_0011) << 3) + ((lo & 0b1110_0000) >> 5);
@@ -603,6 +712,7 @@ pub fn argb555to888(lo: u8, hi: u8) -> (u8, u8, u8) {
     (r, g, b)
 }
 
+#[inline(always)]
 pub fn rgb565to888(lo: u8, hi: u8) -> (u8, u8, u8) {
     let r = (hi & 0b1111_1000) >> 3;
     let g = ((hi & 0b0000_0111) << 3) + ((lo & 0b1110_0000) >> 5);
