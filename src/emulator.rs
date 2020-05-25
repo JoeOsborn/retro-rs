@@ -1,6 +1,7 @@
 use libloading::Symbol;
 use crate::buttons::Buttons;
 use crate::error::*;
+use crate::pixels::*;
 use libc::c_char;
 use libloading::Library;
 use libretro_sys::*;
@@ -394,7 +395,7 @@ impl Emulator {
     pub fn framebuffer_pitch(&self) -> usize {
         unsafe { (*CONTEXT).frame_pitch }
     }
-    pub fn peek_framebuffer<FBPeek, FBPeekRet>(&self, f: FBPeek) -> Result<FBPeekRet, RetroRsError>
+    fn peek_framebuffer<FBPeek, FBPeekRet>(&self, f: FBPeek) -> Result<FBPeekRet, RetroRsError>
     where
         FBPeek: FnOnce(&[u8]) -> FBPeekRet,
     {
@@ -553,6 +554,37 @@ impl Emulator {
             };
         })
     }
+    pub fn copy_framebuffer_rgb332(&self, slice: &mut [u8]) -> Result<(), RetroRsError> {
+        let fmt = self.pixel_format();
+        self.peek_framebuffer(move |fb| {
+            match fmt {
+                PixelFormat::ARGB1555 => {
+                    for (components,dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
+                        let gb = components[0];
+                        let arg = components[1];
+                        let (red, green, blue) = argb555to888(gb, arg);
+                        *dst = rgb888_to_rgb332(red,green,blue);
+                    }
+                }
+                PixelFormat::ARGB8888 => {
+                    for (components,dst) in fb.chunks_exact(4).zip(slice.iter_mut()) {
+                        let r = components[1];
+                        let g = components[2];
+                        let b = components[3];
+                        *dst = rgb888_to_rgb332(r,g,b);
+                    }
+                }
+                PixelFormat::RGB565 => {
+                    for (components,dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
+                        let gb = components[0];
+                        let rg = components[1];
+                        let (red, green, blue) = rgb565to888(gb, rg);
+                        *dst = rgb888_to_rgb332(red,green,blue);
+                    }
+                }
+            };
+        })
+    }
     pub fn copy_framebuffer_argb32(&self, slice: &mut [u32]) -> Result<(), RetroRsError> {
         let fmt = self.pixel_format();
         self.peek_framebuffer(move |fb| {
@@ -700,29 +732,7 @@ impl Drop for Emulator {
     }
 }
 
-#[inline(always)]
-pub fn argb555to888(lo: u8, hi: u8) -> (u8, u8, u8) {
-    let r = (hi & 0b0111_1100) >> 2;
-    let g = ((hi & 0b0000_0011) << 3) + ((lo & 0b1110_0000) >> 5);
-    let b = lo & 0b0001_1111;
-    // Use high bits for empty low bits
-    let r = (r << 3) | (r >> 2);
-    let g = (g << 3) | (g >> 2);
-    let b = (b << 3) | (b >> 2);
-    (r, g, b)
-}
 
-#[inline(always)]
-pub fn rgb565to888(lo: u8, hi: u8) -> (u8, u8, u8) {
-    let r = (hi & 0b1111_1000) >> 3;
-    let g = ((hi & 0b0000_0111) << 3) + ((lo & 0b1110_0000) >> 5);
-    let b = lo & 0b0001_1111;
-    // Use high bits for empty low bits
-    let r = (r << 3) | (r >> 2);
-    let g = (g << 2) | (g >> 3);
-    let b = (b << 3) | (b >> 2);
-    (r, g, b)
-}
 
 #[cfg(test)]
 mod tests {

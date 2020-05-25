@@ -4,6 +4,7 @@ mod emulator;
 pub use emulator::Emulator;
 mod error;
 pub use error::*;
+pub mod pixels;
 
 #[cfg(feature = "use_image")]
 mod fb_to_image;
