@@ -264,21 +264,10 @@ impl Emulator {
     pub fn get_save_ram_size(&self) -> usize {
         self.get_ram_size(MEMORY_SAVE_RAM)
     }
-    pub fn get_video_ram(
-        &self,
-        from: usize,
-        len: usize,
-        into: &mut [u8],
-    ) -> Result<(), RetroRsError> {
-        self.copy_ram(MEMORY_VIDEO_RAM, from, len, into)
-    }
-    pub fn get_system_ram(
-        &self,
-        from: usize,
-        len: usize,
-        into: &mut [u8],
-    ) -> Result<(), RetroRsError> {
-        self.copy_ram(MEMORY_SYSTEM_RAM, from, len, into)
+    pub fn video_ram_ref(
+        &self
+    ) -> &[u8] {
+        self.get_ram(MEMORY_VIDEO_RAM)
     }
     pub fn system_ram_ref(&self) -> &[u8] {
         self.get_ram(MEMORY_SYSTEM_RAM)
@@ -286,30 +275,10 @@ impl Emulator {
     pub fn system_ram_mut(&mut self) -> &mut [u8] {
         self.get_ram_mut(MEMORY_SYSTEM_RAM)
     }
-    pub fn get_save_ram(
-        &self,
-        from: usize,
-        len: usize,
-        into: &mut [u8],
-    ) -> Result<(), RetroRsError> {
-        self.copy_ram(MEMORY_SAVE_RAM, from, len, into)
-    }
-
-    fn copy_ram(&self,
-        ramtype: libc::c_uint,
-        from: usize,
-        len: usize,
-        into: &mut [u8]
-    ) -> Result<(), RetroRsError> {
-        if len > into.len() {
-            return Err(RetroRsError::RAMCopyDestTooSmallError);
-        }
-        let ram = self.get_ram(ramtype);
-        if from + len > ram.len() {
-            return Err(RetroRsError::RAMCopySrcOutOfBoundsError);
-        }
-        into.copy_from_slice(&ram[from..][..len]);
-        Ok(())
+    pub fn save_ram(
+        &self
+    ) -> &[u8] {
+        self.get_ram(MEMORY_SAVE_RAM)
     }
 
     fn get_ram(&self, ramtype: libc::c_uint) -> &[u8] {
@@ -350,53 +319,42 @@ impl Emulator {
             })
             .collect()
     }
-    pub fn get_memory_addr(
+    pub fn memory_ref(
         &self,
         start: usize,
-        len: usize,
-        into: &mut [u8],
-    ) -> Result<(), RetroRsError> {
+    ) -> Result<&[u8], RetroRsError> {
         for mr in self.memory_regions() {
             if mr.select != 0 && (start & mr.select) == 0 {
                 continue;
             }
             if start >= mr.start && start < mr.start + mr.len {
-                if start + len >= mr.start + mr.len {
-                    return Err(RetroRsError::RAMCopyCrossedRegionError);
-                }
-                return self.get_memory(mr, start, len, into);
+                return self.memory_ref_mut(mr, start).map(|slice| &*slice);
             }
         }
         Err(RetroRsError::RAMCopyNotMappedIntoMemoryRegionError)
     }
-    pub fn get_memory(
+    pub fn memory_ref_mut(
         &self,
         mr: MemoryRegion,
         start: usize,
-        len: usize,
-        into: &mut [u8],
-    ) -> Result<(), RetroRsError> {
-        if len > into.len() {
-            return Err(RetroRsError::RAMCopyDestTooSmallError);
-        }
+    ) -> Result<&mut [u8], RetroRsError> {
         let maps = unsafe { &(*CONTEXT).memory_map };
         if mr.which >= maps.len() {
             // TODO more aggressive checking of mr vs map
             return Err(RetroRsError::RAMMapOutOfRangeError);
         }
-        if start < mr.start || start + len >= mr.start + mr.len {
+        if start < mr.start {
             return Err(RetroRsError::RAMCopySrcOutOfBoundsError);
         }
         let start = (start - mr.start) & !mr.disconnect;
         let map = &maps[mr.which];
         //0-based at this point, modulo offset
-        let ptr: *const u8 = map.ptr.cast();
+        let ptr: *mut u8 = map.ptr.cast();
         let slice = unsafe {
             let ptr = ptr.add(start).add(map.offset);
-            std::slice::from_raw_parts(ptr, len)
+            std::slice::from_raw_parts_mut(ptr, map.len-start)
         };
-        into.copy_from_slice(slice);
-        Ok(())
+        Ok(slice)
     }
 
     pub fn pixel_format(&self) -> PixelFormat {
@@ -762,28 +720,23 @@ mod tests {
     use crate::fb_to_image::*;
 
     fn mario_is_dead(emu: &Emulator) -> bool {
-        let mut buf = [0];
-        emu.get_system_ram(0x0770, 1, &mut buf)
-            .expect("Couldn't read RAM!");
-        buf[0] == 0x03
+        emu.system_ram_ref()[0x0770] == 0x03
     }
 
     const PPU_BIT:usize = 1 << 31;
 
     fn get_byte(emu:&Emulator, addr:usize) -> u8 {
-        let mut out = [0];
-        emu.get_memory_addr(addr, 1, &mut out).expect("Couldn't read RAM!");
-        out[0]
+        emu.memory_ref(addr).expect("Couldn't read RAM!")[0]
     }
 
     #[cfg(feature = "use_image")]
     #[test]
     fn it_works() {
+        // TODO change to a public domain rom or maybe 2048 core or something
         let mut emu = Emulator::create(
             Path::new("cores/fceumm_libretro"),
             Path::new("roms/mario.nes"),
         );
-        dbg!(emu.pixel_format());
         for i in 0..250 {
             emu.run([
                 Buttons::new()
@@ -793,15 +746,6 @@ mod tests {
                 Buttons::new(),
             ]);
         }
-        for mr in emu.memory_regions() {
-            dbg!(mr);
-        }
-
-        dbg!(get_byte(&emu, 0x2000));
-        dbg!(get_byte(&emu, 0x2000|PPU_BIT));
-        dbg!(get_byte(&emu, 0x3000|PPU_BIT));
-        dbg!(get_byte(&emu, 0x4000|PPU_BIT));
-
         let fb = emu.create_imagebuffer();
         fb.unwrap().save("out.png").unwrap();
         let mut died = false;
