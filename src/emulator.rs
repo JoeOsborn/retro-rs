@@ -247,7 +247,7 @@ impl Emulator {
         len: usize,
         into: &mut [u8],
     ) -> Result<(), RetroRsError> {
-        self.get_ram(MEMORY_VIDEO_RAM, from, len, into)
+        self.copy_ram(MEMORY_VIDEO_RAM, from, len, into)
     }
     pub fn get_system_ram(
         &self,
@@ -255,7 +255,13 @@ impl Emulator {
         len: usize,
         into: &mut [u8],
     ) -> Result<(), RetroRsError> {
-        self.get_ram(MEMORY_SYSTEM_RAM, from, len, into)
+        self.copy_ram(MEMORY_SYSTEM_RAM, from, len, into)
+    }
+    pub fn system_ram_ref(&self) -> &[u8] {
+        self.get_ram(MEMORY_SYSTEM_RAM)
+    }
+    pub fn system_ram_mut(&mut self) -> &mut [u8] {
+        self.get_ram_mut(MEMORY_SYSTEM_RAM)
     }
     pub fn get_save_ram(
         &self,
@@ -263,28 +269,40 @@ impl Emulator {
         len: usize,
         into: &mut [u8],
     ) -> Result<(), RetroRsError> {
-        self.get_ram(MEMORY_SAVE_RAM, from, len, into)
+        self.copy_ram(MEMORY_SAVE_RAM, from, len, into)
     }
-    fn get_ram(
-        &self,
+
+    fn copy_ram(&self,
         ramtype: libc::c_uint,
         from: usize,
         len: usize,
-        into: &mut [u8],
+        into: &mut [u8]
     ) -> Result<(), RetroRsError> {
         if len > into.len() {
             return Err(RetroRsError::RAMCopyDestTooSmallError);
         }
-        if from + len > self.get_ram_size(ramtype) {
+        let ram = self.get_ram(ramtype);
+        if from + len > ram.len() {
             return Err(RetroRsError::RAMCopySrcOutOfBoundsError);
         }
-        let slice = unsafe {
-            let ptr: *const u8 = ((*EMULATOR).core.retro_get_memory_data)(ramtype).cast();
-            let ptr = ptr.add(from);
-            std::slice::from_raw_parts(ptr, len)
-        };
-        into.copy_from_slice(slice);
+        into.copy_from_slice(&ram[from..][..len]);
         Ok(())
+    }
+
+    fn get_ram(&self, ramtype: libc::c_uint) -> &[u8] {
+        let len = self.get_ram_size(ramtype);
+        unsafe {
+            let ptr: *const u8 = ((*EMULATOR).core.retro_get_memory_data)(ramtype).cast();
+            std::slice::from_raw_parts(ptr, len)
+        }
+    }
+
+    fn get_ram_mut(&mut self, ramtype: libc::c_uint) -> &mut [u8] {
+        let len = self.get_ram_size(ramtype);
+        unsafe {
+            let ptr: *mut u8 = ((*EMULATOR).core.retro_get_memory_data)(ramtype).cast();
+            std::slice::from_raw_parts_mut(ptr, len)
+        }
     }
 
     pub fn memory_regions(&self) -> Vec<MemoryRegion> {
