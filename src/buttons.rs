@@ -123,5 +123,4 @@ impl Buttons {
     pub fn get_r3(self) -> bool {
         self.get(DEVICE_ID_JOYPAD_R3)
     }
-
 }

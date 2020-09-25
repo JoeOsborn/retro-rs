@@ -1,16 +1,16 @@
-use libloading::Symbol;
 use crate::buttons::Buttons;
 use crate::error::*;
 use crate::pixels::*;
 use libc::c_char;
 use libloading::Library;
+use libloading::Symbol;
 use libretro_sys::*;
 use std::ffi::{c_void, CStr, CString};
 use std::fs::File;
 use std::io::Read;
 use std::marker::PhantomData;
 use std::panic;
-use std::path::{Path,PathBuf};
+use std::path::{Path, PathBuf};
 use std::ptr;
 
 type NotSendSync = *const [u8; 0];
@@ -72,14 +72,16 @@ impl Emulator {
         } else {
             panic!("Unsupported platform")
         };
-        let path:PathBuf = core_path.with_extension(suffix);
+        let path: PathBuf = core_path.with_extension(suffix);
         #[cfg(target_os = "linux")]
         let library: Library = {
             // Load library with `RTLD_NOW | RTLD_NODELETE` to fix a SIGSEGV
-            ::libloading::os::unix::Library::open(Some(path), 0x2 | 0x1000).unwrap().into()
+            ::libloading::os::unix::Library::open(Some(path), 0x2 | 0x1000)
+                .unwrap()
+                .into()
         };
         #[cfg(not(target_os = "linux"))]
-        let library = Library::new(path.as_ref()).unwrap();
+        let library = Library::new(path).unwrap();
         let dll = Box::new(library);
         unsafe {
             let retro_set_environment = *(dll.get(b"retro_set_environment").unwrap());
@@ -219,13 +221,11 @@ impl Emulator {
         }
     }
     pub fn get_library(&mut self) -> &Library {
-        unsafe {
-            &(*EMULATOR).core_lib
-        }
+        unsafe { &(*EMULATOR).core_lib }
     }
-    pub fn get_symbol<'a, T>(&'a self, symbol:&[u8]) -> Option<Symbol<'a, T>> {
+    pub fn get_symbol<'a, T>(&'a self, symbol: &[u8]) -> Option<Symbol<'a, T>> {
         let dll = unsafe { &(*EMULATOR).core_lib };
-        let sym:Result<Symbol<T>,_> = unsafe { dll.get(symbol) };
+        let sym: Result<Symbol<T>, _> = unsafe { dll.get(symbol) };
         if sym.is_err() {
             return None;
         }
@@ -264,9 +264,7 @@ impl Emulator {
     pub fn get_save_ram_size(&self) -> usize {
         self.get_ram_size(MEMORY_SAVE_RAM)
     }
-    pub fn video_ram_ref(
-        &self
-    ) -> &[u8] {
+    pub fn video_ram_ref(&self) -> &[u8] {
         self.get_ram(MEMORY_VIDEO_RAM)
     }
     pub fn system_ram_ref(&self) -> &[u8] {
@@ -275,9 +273,7 @@ impl Emulator {
     pub fn system_ram_mut(&mut self) -> &mut [u8] {
         self.get_ram_mut(MEMORY_SYSTEM_RAM)
     }
-    pub fn save_ram(
-        &self
-    ) -> &[u8] {
+    pub fn save_ram(&self) -> &[u8] {
         self.get_ram(MEMORY_SAVE_RAM)
     }
 
@@ -319,10 +315,7 @@ impl Emulator {
             })
             .collect()
     }
-    pub fn memory_ref(
-        &self,
-        start: usize,
-    ) -> Result<&[u8], RetroRsError> {
+    pub fn memory_ref(&self, start: usize) -> Result<&[u8], RetroRsError> {
         for mr in self.memory_regions() {
             if mr.select != 0 && (start & mr.select) == 0 {
                 continue;
@@ -352,7 +345,7 @@ impl Emulator {
         let ptr: *mut u8 = map.ptr.cast();
         let slice = unsafe {
             let ptr = ptr.add(start).add(map.offset);
-            std::slice::from_raw_parts_mut(ptr, map.len-start)
+            std::slice::from_raw_parts_mut(ptr, map.len - start)
         };
         Ok(slice)
     }
@@ -414,31 +407,30 @@ impl Emulator {
             )
         }
     }
-    pub fn get_pixel(&self, x:usize, y:usize) -> Result<(u8, u8, u8), RetroRsError> {
-        let (w,_h) = self.framebuffer_size();
-        self.peek_framebuffer(move |fb| {
-            match self.pixel_format() {
-                PixelFormat::ARGB1555 => {
-                    let start = y * w + x;
-                    let gb = fb[start * 2];
-                    let arg = fb[start * 2 + 1];
-                    let (red, green, blue) = argb555to888(gb, arg);
-                    (red, green, blue)
-                },
-                PixelFormat::ARGB8888 => {
-                    let off = (y * w + x) * 4;
-                    (fb[off + 1], fb[off + 2], fb[off + 3])
-                },
-                PixelFormat::RGB565 => {
-                    let start = y * w + x;
-                    let gb = fb[start * 2];
-                    let rg = fb[start * 2 + 1];
-                    let (red, green, blue) = rgb565to888(gb, rg);
-                    (red, green, blue)
-                }
+    pub fn get_pixel(&self, x: usize, y: usize) -> Result<(u8, u8, u8), RetroRsError> {
+        let (w, _h) = self.framebuffer_size();
+        self.peek_framebuffer(move |fb| match self.pixel_format() {
+            PixelFormat::ARGB1555 => {
+                let start = y * w + x;
+                let gb = fb[start * 2];
+                let arg = fb[start * 2 + 1];
+                let (red, green, blue) = argb555to888(gb, arg);
+                (red, green, blue)
+            }
+            PixelFormat::ARGB8888 => {
+                let off = (y * w + x) * 4;
+                (fb[off + 1], fb[off + 2], fb[off + 3])
+            }
+            PixelFormat::RGB565 => {
+                let start = y * w + x;
+                let gb = fb[start * 2];
+                let rg = fb[start * 2 + 1];
+                let (red, green, blue) = rgb565to888(gb, rg);
+                (red, green, blue)
             }
         })
     }
+    #[allow(clippy::many_single_char_names)]
     pub fn for_each_pixel(
         &self,
         mut f: impl FnMut(usize, usize, u8, u8, u8),
@@ -498,7 +490,7 @@ impl Emulator {
         self.peek_framebuffer(move |fb| {
             match fmt {
                 PixelFormat::ARGB1555 => {
-                    for (components,dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(3)) {
+                    for (components, dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(3)) {
                         let gb = components[0];
                         let arg = components[1];
                         let (red, green, blue) = argb555to888(gb, arg);
@@ -508,7 +500,7 @@ impl Emulator {
                     }
                 }
                 PixelFormat::ARGB8888 => {
-                    for (components,dst) in fb.chunks_exact(4).zip(slice.chunks_exact_mut(3)) {
+                    for (components, dst) in fb.chunks_exact(4).zip(slice.chunks_exact_mut(3)) {
                         let r = components[1];
                         let g = components[2];
                         let b = components[3];
@@ -518,7 +510,7 @@ impl Emulator {
                     }
                 }
                 PixelFormat::RGB565 => {
-                    for (components,dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(3)) {
+                    for (components, dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(3)) {
                         let gb = components[0];
                         let rg = components[1];
                         let (red, green, blue) = rgb565to888(gb, rg);
@@ -535,27 +527,27 @@ impl Emulator {
         self.peek_framebuffer(move |fb| {
             match fmt {
                 PixelFormat::ARGB1555 => {
-                    for (components,dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
+                    for (components, dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
                         let gb = components[0];
                         let arg = components[1];
                         let (red, green, blue) = argb555to888(gb, arg);
-                        *dst = rgb888_to_rgb332(red,green,blue);
+                        *dst = rgb888_to_rgb332(red, green, blue);
                     }
                 }
                 PixelFormat::ARGB8888 => {
-                    for (components,dst) in fb.chunks_exact(4).zip(slice.iter_mut()) {
+                    for (components, dst) in fb.chunks_exact(4).zip(slice.iter_mut()) {
                         let r = components[1];
                         let g = components[2];
                         let b = components[3];
-                        *dst = rgb888_to_rgb332(r,g,b);
+                        *dst = rgb888_to_rgb332(r, g, b);
                     }
                 }
                 PixelFormat::RGB565 => {
-                    for (components,dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
+                    for (components, dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
                         let gb = components[0];
                         let rg = components[1];
                         let (red, green, blue) = rgb565to888(gb, rg);
-                        *dst = rgb888_to_rgb332(red,green,blue);
+                        *dst = rgb888_to_rgb332(red, green, blue);
                     }
                 }
             };
@@ -566,24 +558,33 @@ impl Emulator {
         self.peek_framebuffer(move |fb| {
             match fmt {
                 PixelFormat::ARGB1555 => {
-                    for (components,dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
+                    for (components, dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
                         let gb = components[0];
                         let arg = components[1];
                         let (red, green, blue) = argb555to888(gb, arg);
-                        *dst = 0xFF00_0000 | (u32::from(red) << 16) | (u32::from(green) << 8) | u32::from(blue);
+                        *dst = 0xFF00_0000
+                            | (u32::from(red) << 16)
+                            | (u32::from(green) << 8)
+                            | u32::from(blue);
                     }
                 }
                 PixelFormat::ARGB8888 => {
-                    for (components,dst) in fb.chunks_exact(4).zip(slice.iter_mut()) {
-                        *dst = (u32::from(components[0]) << 24) | (u32::from(components[1]) << 16) | (u32::from(components[2]) << 8) | u32::from(components[3]);
+                    for (components, dst) in fb.chunks_exact(4).zip(slice.iter_mut()) {
+                        *dst = (u32::from(components[0]) << 24)
+                            | (u32::from(components[1]) << 16)
+                            | (u32::from(components[2]) << 8)
+                            | u32::from(components[3]);
                     }
                 }
                 PixelFormat::RGB565 => {
-                    for (components,dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
+                    for (components, dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
                         let gb = components[0];
                         let rg = components[1];
                         let (red, green, blue) = rgb565to888(gb, rg);
-                        *dst = 0xFF00_0000 | (u32::from(red) << 16) | (u32::from(green) << 8) | u32::from(blue);
+                        *dst = 0xFF00_0000
+                            | (u32::from(red) << 16)
+                            | (u32::from(green) << 8)
+                            | u32::from(blue);
                     }
                 }
             };
@@ -708,8 +709,6 @@ impl Drop for Emulator {
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -723,9 +722,9 @@ mod tests {
         emu.system_ram_ref()[0x0770] == 0x03
     }
 
-    const PPU_BIT:usize = 1 << 31;
+    const PPU_BIT: usize = 1 << 31;
 
-    fn get_byte(emu:&Emulator, addr:usize) -> u8 {
+    fn get_byte(emu: &Emulator, addr: usize) -> u8 {
         emu.memory_ref(addr).expect("Couldn't read RAM!")[0]
     }
 
@@ -734,9 +733,11 @@ mod tests {
     fn it_works() {
         // TODO change to a public domain rom or maybe 2048 core or something
         let mut emu = Emulator::create(
-            Path::new("cores/fceumm_libretro"),
-            Path::new("roms/mario.nes"),
+            Path::new("../mechlearn/mappy/cores/fceumm_libretro"),
+            Path::new("roms/zelda.nes"),
         );
+        emu.run([Buttons::new(), Buttons::new()]);
+        emu.reset();
         for i in 0..250 {
             emu.run([
                 Buttons::new()
