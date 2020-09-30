@@ -562,7 +562,7 @@ impl Emulator {
                         let gb = components[0];
                         let arg = components[1];
                         let (red, green, blue) = argb555to888(gb, arg);
-                        *dst = 0xFF00_0000
+                        *dst = (0xFF00_0000 * (u32::from(arg) >> 7))
                             | (u32::from(red) << 16)
                             | (u32::from(green) << 8)
                             | u32::from(blue);
@@ -602,7 +602,7 @@ impl Emulator {
                         *dst = (u32::from(red) << 24)
                             | (u32::from(green) << 16)
                             | (u32::from(blue) << 8)
-                            | (u32::from(0xFF * (arg >> 7)));
+                            | (u32::from(arg >> 7) * 0x0000_00FF);
                     }
                 }
                 PixelFormat::ARGB8888 => {
@@ -622,6 +622,45 @@ impl Emulator {
                             | (u32::from(green) << 16)
                             | (u32::from(blue) << 8)
                             | 0x0000_00FF;
+                    }
+                }
+            };
+        })
+    }
+    pub fn copy_framebuffer_rgba_f32x4(&self, slice: &mut [f32]) -> Result<(), RetroRsError> {
+        let fmt = self.pixel_format();
+        self.peek_framebuffer(move |fb| {
+            match fmt {
+                PixelFormat::ARGB1555 => {
+                    for (components, dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(4)) {
+                        let gb = components[0];
+                        let arg = components[1];
+                        let (red, green, blue) = argb555to888(gb, arg);
+                        let alpha = (arg >> 7) as f32;
+                        dst[0] = red as f32 / 255.;
+                        dst[1] = green as f32 / 255.;
+                        dst[2] = blue as f32 / 255.;
+                        dst[3] = alpha;
+                    }
+                }
+                PixelFormat::ARGB8888 => {
+                    for (components, dst) in fb.chunks_exact(4).zip(slice.chunks_exact_mut(4)) {
+                        dst[0] = components[0] as f32 / 255.;
+                        dst[1] = components[1] as f32 / 255.;
+                        dst[2] = components[2] as f32 / 255.;
+                        dst[3] = components[3] as f32 / 255.;
+                    }
+                }
+                PixelFormat::RGB565 => {
+                    for (components, dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(4)) {
+                        let gb = components[0];
+                        let rg = components[1];
+                        let (red, green, blue) = rgb565to888(gb, rg);
+                        let alpha = 1.;
+                        dst[0] = red as f32 / 255.;
+                        dst[1] = green as f32 / 255.;
+                        dst[2] = blue as f32 / 255.;
+                        dst[3] = alpha;
                     }
                 }
             };
@@ -775,12 +814,12 @@ mod tests {
         );
         emu.run([Buttons::new(), Buttons::new()]);
         emu.reset();
-        for i in 0..250 {
+        for i in 0..150 {
             emu.run([
                 Buttons::new()
                     .start(i > 80 && i < 100)
                     .right(i >= 100)
-                    .a((i >= 100 && i <= 150) || (i >= 180)),
+                    .a(i >= 100),
                 Buttons::new(),
             ]);
         }
