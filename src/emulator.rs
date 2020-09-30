@@ -522,6 +522,47 @@ impl Emulator {
             };
         })
     }
+    pub fn copy_framebuffer_rgba8888(&self, slice: &mut [u8]) -> Result<(), RetroRsError> {
+        let fmt = self.pixel_format();
+        self.peek_framebuffer(move |fb| {
+            match fmt {
+                PixelFormat::ARGB1555 => {
+                    for (components, dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(4)) {
+                        let gb = components[0];
+                        let arg = components[1];
+                        let (red, green, blue) = argb555to888(gb, arg);
+                        dst[0] = red;
+                        dst[1] = green;
+                        dst[2] = blue;
+                        dst[3] = (arg >> 7) * 0xFF;
+                    }
+                }
+                PixelFormat::ARGB8888 => {
+                    for (components, dst) in fb.chunks_exact(4).zip(slice.chunks_exact_mut(4)) {
+                        let a = components[0];
+                        let r = components[1];
+                        let g = components[2];
+                        let b = components[3];
+                        dst[0] = r;
+                        dst[1] = g;
+                        dst[2] = b;
+                        dst[3] = a;
+                    }
+                }
+                PixelFormat::RGB565 => {
+                    for (components, dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(4)) {
+                        let gb = components[0];
+                        let rg = components[1];
+                        let (red, green, blue) = rgb565to888(gb, rg);
+                        dst[0] = red;
+                        dst[1] = green;
+                        dst[2] = blue;
+                        dst[3] = 0xFF;
+                    }
+                }
+            };
+        })
+    }
     pub fn copy_framebuffer_rgb332(&self, slice: &mut [u8]) -> Result<(), RetroRsError> {
         let fmt = self.pixel_format();
         self.peek_framebuffer(move |fb| {
