@@ -590,6 +590,43 @@ impl Emulator {
             };
         })
     }
+    pub fn copy_framebuffer_rgba32(&self, slice: &mut [u32]) -> Result<(), RetroRsError> {
+        let fmt = self.pixel_format();
+        self.peek_framebuffer(move |fb| {
+            match fmt {
+                PixelFormat::ARGB1555 => {
+                    for (components, dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
+                        let gb = components[0];
+                        let arg = components[1];
+                        let (red, green, blue) = argb555to888(gb, arg);
+                        *dst = (u32::from(red) << 24)
+                            | (u32::from(green) << 16)
+                            | (u32::from(blue) << 8)
+                            | (u32::from(0xFF * (arg >> 7)));
+                    }
+                }
+                PixelFormat::ARGB8888 => {
+                    for (components, dst) in fb.chunks_exact(4).zip(slice.iter_mut()) {
+                        *dst = (u32::from(components[1]) << 24)
+                            | (u32::from(components[2]) << 16)
+                            | (u32::from(components[3]) << 8)
+                            | u32::from(components[0]);
+                    }
+                }
+                PixelFormat::RGB565 => {
+                    for (components, dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
+                        let gb = components[0];
+                        let rg = components[1];
+                        let (red, green, blue) = rgb565to888(gb, rg);
+                        *dst = (u32::from(red) << 24)
+                            | (u32::from(green) << 16)
+                            | (u32::from(blue) << 8)
+                            | 0x0000_00FF;
+                    }
+                }
+            };
+        })
+    }
 }
 
 unsafe extern "C" fn callback_environment(cmd: u32, data: *mut c_void) -> bool {
@@ -734,7 +771,7 @@ mod tests {
         // TODO change to a public domain rom or maybe 2048 core or something
         let mut emu = Emulator::create(
             Path::new("../mechlearn/mappy/cores/fceumm_libretro"),
-            Path::new("roms/zelda.nes"),
+            Path::new("roms/mario.nes"),
         );
         emu.run([Buttons::new(), Buttons::new()]);
         emu.reset();
