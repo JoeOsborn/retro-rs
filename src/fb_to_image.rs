@@ -3,6 +3,9 @@ use crate::emulator::Emulator;
 use crate::error::*;
 use std::convert::TryInto;
 pub trait FramebufferToImageBuffer {
+    /// # Errors
+    /// [`RetroRsError::ImageBufferError`]: Failed to create image buffer
+    /// Others: See [`Emulator::copy_framebuffer_rgb888`].
     fn create_imagebuffer(
         &self,
     ) -> Result<image::ImageBuffer<image::Rgb<u8>, Vec<u8>>, RetroRsError>;

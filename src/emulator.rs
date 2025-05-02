@@ -33,7 +33,7 @@ struct EmulatorCore {
     core: CoreFns,
     _marker: PhantomData<NotSendSync>,
 }
-#[allow(dead_code)]
+#[allow(dead_code, clippy::struct_field_names)]
 struct CoreFns {
     retro_api_version: unsafe extern "C" fn() -> c_uint,
     retro_cheat_reset: unsafe extern "C" fn(),
@@ -98,6 +98,10 @@ pub struct Emulator {
 }
 
 impl Emulator {
+    /// # Panics
+    /// If the platform is not Windows, Mac, or Linux; if the dylib fails to load successfully; if any Emulator has been created on this thread but not yet dropped.
+    #[must_use]
+    #[allow(clippy::too_many_lines)]
     pub fn create(core_path: &Path, rom_path: &Path) -> Emulator {
         let frontend = Frontend {
             set_environment: callback_environment,
@@ -232,10 +236,11 @@ impl Emulator {
                 memory_map: Vec::new(),
                 _marker: PhantomData,
             };
-            CTX.with_borrow_mut(|ctx_cell| {
-                if ctx_cell.replace(ctx).is_some() {
-                    panic!("Can't use multiple emulators in one thread currently");
-                }
+            CTX.with(|ctx_cell| {
+                assert!(
+                    ctx_cell.replace(Some(ctx)).is_none(),
+                    "Can't use multiple emulators in one thread currently"
+                );
             });
             // Set up callbacks
             (emu.core.retro_set_environment)(Some(frontend.set_environment));
@@ -253,7 +258,7 @@ impl Emulator {
             buffer.shrink_to_fit();
             let game_info = retro_game_info {
                 path: rom_cstr.as_ptr(),
-                data: buffer.as_ptr() as *const c_void,
+                data: buffer.as_ptr().cast(),
                 size: buffer.len(),
                 meta: ptr::null(),
             };
@@ -269,14 +274,13 @@ impl Emulator {
     pub fn get_library(&mut self) -> &Library {
         &self.core.core_lib
     }
+    #[must_use]
     pub fn get_symbol<'a, T>(&'a self, symbol: &[u8]) -> Option<Symbol<'a, T>> {
         let dll = &self.core.core_lib;
         let sym: Result<Symbol<T>, _> = unsafe { dll.get(symbol) };
-        if sym.is_err() {
-            return None;
-        }
-        Some(sym.unwrap())
+        sym.ok()
     }
+    #[allow(clippy::missing_panics_doc)]
     pub fn run(&mut self, inputs: [Buttons; 2]) {
         CTX.with_borrow_mut(|ctx| {
             let ctx = ctx.as_mut().unwrap();
@@ -290,6 +294,7 @@ impl Emulator {
             (self.core.core.retro_run)();
         }
     }
+    #[allow(clippy::missing_panics_doc)]
     pub fn reset(&mut self) {
         CTX.with_borrow_mut(|ctx| {
             let ctx = ctx.as_mut().unwrap();
@@ -302,31 +307,40 @@ impl Emulator {
         });
         unsafe { (self.core.core.retro_reset)() }
     }
+    #[must_use]
     fn get_ram_size(&self, rtype: libc::c_uint) -> usize {
         unsafe { (self.core.core.retro_get_memory_size)(rtype) }
     }
+    #[must_use]
     pub fn get_video_ram_size(&self) -> usize {
         self.get_ram_size(RETRO_MEMORY_VIDEO_RAM)
     }
+    #[must_use]
     pub fn get_system_ram_size(&self) -> usize {
         self.get_ram_size(RETRO_MEMORY_SYSTEM_RAM)
     }
+    #[must_use]
     pub fn get_save_ram_size(&self) -> usize {
         self.get_ram_size(RETRO_MEMORY_SAVE_RAM)
     }
+    #[must_use]
     pub fn video_ram_ref(&self) -> &[u8] {
         self.get_ram(RETRO_MEMORY_VIDEO_RAM)
     }
+    #[must_use]
     pub fn system_ram_ref(&self) -> &[u8] {
         self.get_ram(RETRO_MEMORY_SYSTEM_RAM)
     }
+    #[must_use]
     pub fn system_ram_mut(&mut self) -> &mut [u8] {
         self.get_ram_mut(RETRO_MEMORY_SYSTEM_RAM)
     }
+    #[must_use]
     pub fn save_ram(&self) -> &[u8] {
         self.get_ram(RETRO_MEMORY_SAVE_RAM)
     }
 
+    #[must_use]
     fn get_ram(&self, ramtype: libc::c_uint) -> &[u8] {
         let len = self.get_ram_size(ramtype);
         unsafe {
@@ -335,6 +349,7 @@ impl Emulator {
         }
     }
 
+    #[must_use]
     fn get_ram_mut(&mut self, ramtype: libc::c_uint) -> &mut [u8] {
         let len = self.get_ram_size(ramtype);
         unsafe {
@@ -343,6 +358,8 @@ impl Emulator {
         }
     }
 
+    #[allow(clippy::missing_panics_doc, clippy::unused_self)]
+    #[must_use]
     pub fn memory_regions(&self) -> Vec<MemoryRegion> {
         CTX.with_borrow(|ctx| {
             let map = &ctx.as_ref().unwrap().memory_map;
@@ -357,7 +374,7 @@ impl Emulator {
                     select: mdesc.select,
                     disconnect: mdesc.disconnect,
                     name: if mdesc.addrspace.is_null() {
-                        "".to_owned()
+                        String::new()
                     } else {
                         unsafe { CStr::from_ptr(mdesc.addrspace) }
                             .to_string_lossy()
@@ -367,20 +384,26 @@ impl Emulator {
                 .collect()
         })
     }
+    /// # Errors
+    /// [`RetroRsError::RAMCopyNotMappedIntoMemoryRegionError`]: Returns an error if the desired address is not mapped into memory regions
     pub fn memory_ref(&self, start: usize) -> Result<&[u8], RetroRsError> {
         for mr in self.memory_regions() {
             if mr.select != 0 && (start & mr.select) == 0 {
                 continue;
             }
             if start >= mr.start && start < mr.start + mr.len {
-                return self.memory_ref_mut(mr, start).map(|slice| &*slice);
+                return self.memory_ref_mut(&mr, start).map(|slice| &*slice);
             }
         }
         Err(RetroRsError::RAMCopyNotMappedIntoMemoryRegionError)
     }
+    #[allow(clippy::missing_panics_doc, clippy::unused_self)]
+    /// # Errors
+    /// [`RetroRsError::RAMMapOutOfRangeError`]: The desired address is out of mapped range
+    /// [`RetroRsError::RAMCopySrcOutOfBoundsError`]: The desired range is not in the requested region
     pub fn memory_ref_mut(
         &self,
-        mr: MemoryRegion,
+        mr: &MemoryRegion,
         start: usize,
     ) -> Result<&mut [u8], RetroRsError> {
         CTX.with_borrow_mut(|ctx| {
@@ -403,18 +426,27 @@ impl Emulator {
             Ok(slice)
         })
     }
+    #[allow(clippy::missing_panics_doc, clippy::unused_self)]
+    #[must_use]
     pub fn pixel_format(&self) -> retro_pixel_format {
         CTX.with_borrow(|ctx| ctx.as_ref().unwrap().pixfmt)
     }
+    #[allow(clippy::missing_panics_doc, clippy::unused_self)]
+    #[must_use]
     pub fn framebuffer_size(&self) -> (usize, usize) {
         CTX.with_borrow(|ctx| {
             let ctx = ctx.as_ref().unwrap();
             (ctx.frame_width as usize, ctx.frame_height as usize)
         })
     }
+    #[allow(clippy::missing_panics_doc, clippy::unused_self)]
+    #[must_use]
     pub fn framebuffer_pitch(&self) -> usize {
         CTX.with_borrow(|ctx| ctx.as_ref().unwrap().frame_pitch)
     }
+    #[allow(clippy::missing_panics_doc, clippy::unused_self)]
+    /// # Errors
+    /// [`RetroRsError::NoFramebufferError`]: Emulator has not created a framebuffer.
     fn peek_framebuffer<FBPeek, FBPeekRet>(&self, f: FBPeek) -> Result<FBPeekRet, RetroRsError>
     where
         FBPeek: FnOnce(&[u8]) -> FBPeekRet,
@@ -425,8 +457,9 @@ impl Emulator {
                 Err(RetroRsError::NoFramebufferError)
             } else {
                 unsafe {
+                    #[allow(clippy::cast_possible_truncation)]
                     let frame_slice = std::slice::from_raw_parts(
-                        ctx.frame_ptr as *const u8,
+                        ctx.frame_ptr.cast(),
                         (ctx.frame_height * (ctx.frame_pitch as u32)) as usize,
                     );
                     Ok(f(frame_slice))
@@ -435,32 +468,46 @@ impl Emulator {
         })
     }
 
+    #[must_use]
     pub fn save(&self, bytes: &mut [u8]) -> bool {
         let size = self.save_size();
-        assert!(bytes.len() >= size);
-        unsafe { (self.core.core.retro_serialize)(bytes.as_mut_ptr() as *mut c_void, size) }
+        if bytes.len() < size {
+            return false;
+        }
+        unsafe { (self.core.core.retro_serialize)(bytes.as_mut_ptr().cast(), size) }
     }
+    #[must_use]
     pub fn load(&mut self, bytes: &[u8]) -> bool {
         let size = self.save_size();
-        assert!(bytes.len() >= size);
-        unsafe { (self.core.core.retro_unserialize)(bytes.as_ptr() as *const c_void, size) }
+        if bytes.len() >= size {
+            return false;
+        }
+        unsafe { (self.core.core.retro_unserialize)(bytes.as_ptr().cast(), size) }
     }
+    #[must_use]
     pub fn save_size(&self) -> usize {
         unsafe { (self.core.core.retro_serialize_size)() }
     }
     pub fn clear_cheats(&mut self) {
         unsafe { (self.core.core.retro_cheat_reset)() }
     }
+    /// # Panics
+    /// May panic if code can't be converted to a [`CString`]
     pub fn set_cheat(&mut self, index: usize, enabled: bool, code: &str) {
         unsafe {
             // FIXME: Creates a memory leak since the libretro api won't let me from_raw() it back and drop it.  I don't know if libretro guarantees anything about ownership of this str to cores.
+            #[allow(clippy::cast_possible_truncation)]
             (self.core.core.retro_cheat_set)(
                 index as u32,
                 enabled,
                 CString::new(code).unwrap().into_raw(),
-            )
+            );
         }
     }
+    /// # Panics
+    /// Panics if the pixel format used by the core is not supported for reads.
+    /// # Errors
+    /// [`RetroRsError::NoFramebufferError`]: Emulator has not created a framebuffer.
     pub fn get_pixel(&self, x: usize, y: usize) -> Result<(u8, u8, u8), RetroRsError> {
         let (w, _h) = self.framebuffer_size();
         self.peek_framebuffer(move |fb| match self.pixel_format() {
@@ -485,6 +532,10 @@ impl Emulator {
             _ => panic!("Unsupported pixel format"),
         })
     }
+    /// # Panics
+    /// Panics if the pixel format used by the core is not supported for reads.
+    /// # Errors
+    /// [`RetroRsError::NoFramebufferError`]: Emulator has not created a framebuffer.
     #[allow(clippy::many_single_char_names)]
     pub fn for_each_pixel(
         &self,
@@ -536,237 +587,249 @@ impl Emulator {
                     }
                 }
                 _ => panic!("Unsupported pixel format"),
-            };
+            }
             assert_eq!(y, h);
             assert_eq!(x, 0);
         })
     }
+    /// # Panics
+    /// Panics if the pixel format used by the core is not supported for reads.
+    /// # Errors
+    /// [`RetroRsError::NoFramebufferError`]: Emulator has not created a framebuffer.
     pub fn copy_framebuffer_rgb888(&self, slice: &mut [u8]) -> Result<(), RetroRsError> {
         let fmt = self.pixel_format();
-        self.peek_framebuffer(move |fb| {
-            match fmt {
-                retro_pixel_format::RETRO_PIXEL_FORMAT_0RGB1555 => {
-                    for (components, dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(3)) {
-                        let gb = components[0];
-                        let arg = components[1];
-                        let (red, green, blue) = argb555to888(gb, arg);
-                        dst[0] = red;
-                        dst[1] = green;
-                        dst[2] = blue;
-                    }
+        self.peek_framebuffer(move |fb| match fmt {
+            retro_pixel_format::RETRO_PIXEL_FORMAT_0RGB1555 => {
+                for (components, dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(3)) {
+                    let gb = components[0];
+                    let arg = components[1];
+                    let (red, green, blue) = argb555to888(gb, arg);
+                    dst[0] = red;
+                    dst[1] = green;
+                    dst[2] = blue;
                 }
-                retro_pixel_format::RETRO_PIXEL_FORMAT_XRGB8888 => {
-                    for (components, dst) in fb.chunks_exact(4).zip(slice.chunks_exact_mut(3)) {
-                        let r = components[1];
-                        let g = components[2];
-                        let b = components[3];
-                        dst[0] = r;
-                        dst[1] = g;
-                        dst[2] = b;
-                    }
+            }
+            retro_pixel_format::RETRO_PIXEL_FORMAT_XRGB8888 => {
+                for (components, dst) in fb.chunks_exact(4).zip(slice.chunks_exact_mut(3)) {
+                    let r = components[1];
+                    let g = components[2];
+                    let b = components[3];
+                    dst[0] = r;
+                    dst[1] = g;
+                    dst[2] = b;
                 }
-                retro_pixel_format::RETRO_PIXEL_FORMAT_RGB565 => {
-                    for (components, dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(3)) {
-                        let gb = components[0];
-                        let rg = components[1];
-                        let (red, green, blue) = rgb565to888(gb, rg);
-                        dst[0] = red;
-                        dst[1] = green;
-                        dst[2] = blue;
-                    }
+            }
+            retro_pixel_format::RETRO_PIXEL_FORMAT_RGB565 => {
+                for (components, dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(3)) {
+                    let gb = components[0];
+                    let rg = components[1];
+                    let (red, green, blue) = rgb565to888(gb, rg);
+                    dst[0] = red;
+                    dst[1] = green;
+                    dst[2] = blue;
                 }
-                _ => panic!("Unsupported pixel format"),
-            };
+            }
+            _ => panic!("Unsupported pixel format"),
         })
     }
+    /// # Panics
+    /// Panics if the pixel format used by the core is not supported for reads.
+    /// # Errors
+    /// [`RetroRsError::NoFramebufferError`]: Emulator has not created a framebuffer.
     pub fn copy_framebuffer_rgba8888(&self, slice: &mut [u8]) -> Result<(), RetroRsError> {
         let fmt = self.pixel_format();
-        self.peek_framebuffer(move |fb| {
-            match fmt {
-                retro_pixel_format::RETRO_PIXEL_FORMAT_0RGB1555 => {
-                    for (components, dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(4)) {
-                        let gb = components[0];
-                        let arg = components[1];
-                        let (red, green, blue) = argb555to888(gb, arg);
-                        dst[0] = red;
-                        dst[1] = green;
-                        dst[2] = blue;
-                        dst[3] = (arg >> 7) * 0xFF;
-                    }
+        self.peek_framebuffer(move |fb| match fmt {
+            retro_pixel_format::RETRO_PIXEL_FORMAT_0RGB1555 => {
+                for (components, dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(4)) {
+                    let gb = components[0];
+                    let arg = components[1];
+                    let (red, green, blue) = argb555to888(gb, arg);
+                    dst[0] = red;
+                    dst[1] = green;
+                    dst[2] = blue;
+                    dst[3] = (arg >> 7) * 0xFF;
                 }
-                retro_pixel_format::RETRO_PIXEL_FORMAT_XRGB8888 => {
-                    for (components, dst) in fb.chunks_exact(4).zip(slice.chunks_exact_mut(4)) {
-                        let a = components[0];
-                        let r = components[1];
-                        let g = components[2];
-                        let b = components[3];
-                        dst[0] = r;
-                        dst[1] = g;
-                        dst[2] = b;
-                        dst[3] = a;
-                    }
+            }
+            retro_pixel_format::RETRO_PIXEL_FORMAT_XRGB8888 => {
+                for (components, dst) in fb.chunks_exact(4).zip(slice.chunks_exact_mut(4)) {
+                    let a = components[0];
+                    let r = components[1];
+                    let g = components[2];
+                    let b = components[3];
+                    dst[0] = r;
+                    dst[1] = g;
+                    dst[2] = b;
+                    dst[3] = a;
                 }
-                retro_pixel_format::RETRO_PIXEL_FORMAT_RGB565 => {
-                    for (components, dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(4)) {
-                        let gb = components[0];
-                        let rg = components[1];
-                        let (red, green, blue) = rgb565to888(gb, rg);
-                        dst[0] = red;
-                        dst[1] = green;
-                        dst[2] = blue;
-                        dst[3] = 0xFF;
-                    }
+            }
+            retro_pixel_format::RETRO_PIXEL_FORMAT_RGB565 => {
+                for (components, dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(4)) {
+                    let gb = components[0];
+                    let rg = components[1];
+                    let (red, green, blue) = rgb565to888(gb, rg);
+                    dst[0] = red;
+                    dst[1] = green;
+                    dst[2] = blue;
+                    dst[3] = 0xFF;
                 }
-                _ => panic!("Unsupported pixel format"),
-            };
+            }
+            _ => panic!("Unsupported pixel format"),
         })
     }
+    /// # Panics
+    /// Panics if the pixel format used by the core is not supported for reads.
+    /// # Errors
+    /// [`RetroRsError::NoFramebufferError`]: Emulator has not created a framebuffer.
     pub fn copy_framebuffer_rgb332(&self, slice: &mut [u8]) -> Result<(), RetroRsError> {
         let fmt = self.pixel_format();
-        self.peek_framebuffer(move |fb| {
-            match fmt {
-                retro_pixel_format::RETRO_PIXEL_FORMAT_0RGB1555 => {
-                    for (components, dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
-                        let gb = components[0];
-                        let arg = components[1];
-                        let (red, green, blue) = argb555to888(gb, arg);
-                        *dst = rgb888_to_rgb332(red, green, blue);
-                    }
+        self.peek_framebuffer(move |fb| match fmt {
+            retro_pixel_format::RETRO_PIXEL_FORMAT_0RGB1555 => {
+                for (components, dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
+                    let gb = components[0];
+                    let arg = components[1];
+                    let (red, green, blue) = argb555to888(gb, arg);
+                    *dst = rgb888_to_rgb332(red, green, blue);
                 }
-                retro_pixel_format::RETRO_PIXEL_FORMAT_XRGB8888 => {
-                    for (components, dst) in fb.chunks_exact(4).zip(slice.iter_mut()) {
-                        let r = components[1];
-                        let g = components[2];
-                        let b = components[3];
-                        *dst = rgb888_to_rgb332(r, g, b);
-                    }
+            }
+            retro_pixel_format::RETRO_PIXEL_FORMAT_XRGB8888 => {
+                for (components, dst) in fb.chunks_exact(4).zip(slice.iter_mut()) {
+                    let r = components[1];
+                    let g = components[2];
+                    let b = components[3];
+                    *dst = rgb888_to_rgb332(r, g, b);
                 }
-                retro_pixel_format::RETRO_PIXEL_FORMAT_RGB565 => {
-                    for (components, dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
-                        let gb = components[0];
-                        let rg = components[1];
-                        let (red, green, blue) = rgb565to888(gb, rg);
-                        *dst = rgb888_to_rgb332(red, green, blue);
-                    }
+            }
+            retro_pixel_format::RETRO_PIXEL_FORMAT_RGB565 => {
+                for (components, dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
+                    let gb = components[0];
+                    let rg = components[1];
+                    let (red, green, blue) = rgb565to888(gb, rg);
+                    *dst = rgb888_to_rgb332(red, green, blue);
                 }
-                _ => panic!("Unsupported pixel format"),
-            };
+            }
+            _ => panic!("Unsupported pixel format"),
         })
     }
+    /// # Panics
+    /// Panics if the pixel format used by the core is not supported for reads.
+    /// # Errors
+    /// [`RetroRsError::NoFramebufferError`]: Emulator has not created a framebuffer.
     pub fn copy_framebuffer_argb32(&self, slice: &mut [u32]) -> Result<(), RetroRsError> {
         let fmt = self.pixel_format();
-        self.peek_framebuffer(move |fb| {
-            match fmt {
-                retro_pixel_format::RETRO_PIXEL_FORMAT_0RGB1555 => {
-                    for (components, dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
-                        let gb = components[0];
-                        let arg = components[1];
-                        let (red, green, blue) = argb555to888(gb, arg);
-                        *dst = (0xFF00_0000 * (u32::from(arg) >> 7))
-                            | (u32::from(red) << 16)
-                            | (u32::from(green) << 8)
-                            | u32::from(blue);
-                    }
+        self.peek_framebuffer(move |fb| match fmt {
+            retro_pixel_format::RETRO_PIXEL_FORMAT_0RGB1555 => {
+                for (components, dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
+                    let gb = components[0];
+                    let arg = components[1];
+                    let (red, green, blue) = argb555to888(gb, arg);
+                    *dst = (0xFF00_0000 * (u32::from(arg) >> 7))
+                        | (u32::from(red) << 16)
+                        | (u32::from(green) << 8)
+                        | u32::from(blue);
                 }
-                retro_pixel_format::RETRO_PIXEL_FORMAT_XRGB8888 => {
-                    for (components, dst) in fb.chunks_exact(4).zip(slice.iter_mut()) {
-                        *dst = (u32::from(components[0]) << 24)
-                            | (u32::from(components[1]) << 16)
-                            | (u32::from(components[2]) << 8)
-                            | u32::from(components[3]);
-                    }
+            }
+            retro_pixel_format::RETRO_PIXEL_FORMAT_XRGB8888 => {
+                for (components, dst) in fb.chunks_exact(4).zip(slice.iter_mut()) {
+                    *dst = (u32::from(components[0]) << 24)
+                        | (u32::from(components[1]) << 16)
+                        | (u32::from(components[2]) << 8)
+                        | u32::from(components[3]);
                 }
-                retro_pixel_format::RETRO_PIXEL_FORMAT_RGB565 => {
-                    for (components, dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
-                        let gb = components[0];
-                        let rg = components[1];
-                        let (red, green, blue) = rgb565to888(gb, rg);
-                        *dst = 0xFF00_0000
-                            | (u32::from(red) << 16)
-                            | (u32::from(green) << 8)
-                            | u32::from(blue);
-                    }
+            }
+            retro_pixel_format::RETRO_PIXEL_FORMAT_RGB565 => {
+                for (components, dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
+                    let gb = components[0];
+                    let rg = components[1];
+                    let (red, green, blue) = rgb565to888(gb, rg);
+                    *dst = 0xFF00_0000
+                        | (u32::from(red) << 16)
+                        | (u32::from(green) << 8)
+                        | u32::from(blue);
                 }
-                _ => panic!("Unsupported pixel format"),
-            };
+            }
+            _ => panic!("Unsupported pixel format"),
         })
     }
+    /// # Panics
+    /// Panics if the pixel format used by the core is not supported for reads.
+    /// # Errors
+    /// [`RetroRsError::NoFramebufferError`]: Emulator has not created a framebuffer.
     pub fn copy_framebuffer_rgba32(&self, slice: &mut [u32]) -> Result<(), RetroRsError> {
         let fmt = self.pixel_format();
-        self.peek_framebuffer(move |fb| {
-            match fmt {
-                retro_pixel_format::RETRO_PIXEL_FORMAT_0RGB1555 => {
-                    for (components, dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
-                        let gb = components[0];
-                        let arg = components[1];
-                        let (red, green, blue) = argb555to888(gb, arg);
-                        *dst = (u32::from(red) << 24)
-                            | (u32::from(green) << 16)
-                            | (u32::from(blue) << 8)
-                            | (u32::from(arg >> 7) * 0x0000_00FF);
-                    }
+        self.peek_framebuffer(move |fb| match fmt {
+            retro_pixel_format::RETRO_PIXEL_FORMAT_0RGB1555 => {
+                for (components, dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
+                    let gb = components[0];
+                    let arg = components[1];
+                    let (red, green, blue) = argb555to888(gb, arg);
+                    *dst = (u32::from(red) << 24)
+                        | (u32::from(green) << 16)
+                        | (u32::from(blue) << 8)
+                        | (u32::from(arg >> 7) * 0x0000_00FF);
                 }
-                retro_pixel_format::RETRO_PIXEL_FORMAT_XRGB8888 => {
-                    for (components, dst) in fb.chunks_exact(4).zip(slice.iter_mut()) {
-                        *dst = (u32::from(components[1]) << 24)
-                            | (u32::from(components[2]) << 16)
-                            | (u32::from(components[3]) << 8)
-                            | u32::from(components[0]);
-                    }
+            }
+            retro_pixel_format::RETRO_PIXEL_FORMAT_XRGB8888 => {
+                for (components, dst) in fb.chunks_exact(4).zip(slice.iter_mut()) {
+                    *dst = (u32::from(components[1]) << 24)
+                        | (u32::from(components[2]) << 16)
+                        | (u32::from(components[3]) << 8)
+                        | u32::from(components[0]);
                 }
-                retro_pixel_format::RETRO_PIXEL_FORMAT_RGB565 => {
-                    for (components, dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
-                        let gb = components[0];
-                        let rg = components[1];
-                        let (red, green, blue) = rgb565to888(gb, rg);
-                        *dst = (u32::from(red) << 24)
-                            | (u32::from(green) << 16)
-                            | (u32::from(blue) << 8)
-                            | 0x0000_00FF;
-                    }
+            }
+            retro_pixel_format::RETRO_PIXEL_FORMAT_RGB565 => {
+                for (components, dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
+                    let gb = components[0];
+                    let rg = components[1];
+                    let (red, green, blue) = rgb565to888(gb, rg);
+                    *dst = (u32::from(red) << 24)
+                        | (u32::from(green) << 16)
+                        | (u32::from(blue) << 8)
+                        | 0x0000_00FF;
                 }
-                _ => panic!("Unsupported pixel format"),
-            };
+            }
+            _ => panic!("Unsupported pixel format"),
         })
     }
+    /// # Panics
+    /// Panics if the pixel format used by the core is not supported for reads.
+    /// # Errors
+    /// [`RetroRsError::NoFramebufferError`]: Emulator has not created a framebuffer.
     pub fn copy_framebuffer_rgba_f32x4(&self, slice: &mut [f32]) -> Result<(), RetroRsError> {
         let fmt = self.pixel_format();
-        self.peek_framebuffer(move |fb| {
-            match fmt {
-                retro_pixel_format::RETRO_PIXEL_FORMAT_0RGB1555 => {
-                    for (components, dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(4)) {
-                        let gb = components[0];
-                        let arg = components[1];
-                        let (red, green, blue) = argb555to888(gb, arg);
-                        let alpha = (arg >> 7) as f32;
-                        dst[0] = red as f32 / 255.;
-                        dst[1] = green as f32 / 255.;
-                        dst[2] = blue as f32 / 255.;
-                        dst[3] = alpha;
-                    }
+        self.peek_framebuffer(move |fb| match fmt {
+            retro_pixel_format::RETRO_PIXEL_FORMAT_0RGB1555 => {
+                for (components, dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(4)) {
+                    let gb = components[0];
+                    let arg = components[1];
+                    let (red, green, blue) = argb555to888(gb, arg);
+                    let alpha = f32::from(arg >> 7);
+                    dst[0] = f32::from(red) / 255.;
+                    dst[1] = f32::from(green) / 255.;
+                    dst[2] = f32::from(blue) / 255.;
+                    dst[3] = alpha;
                 }
-                retro_pixel_format::RETRO_PIXEL_FORMAT_XRGB8888 => {
-                    for (components, dst) in fb.chunks_exact(4).zip(slice.chunks_exact_mut(4)) {
-                        dst[0] = components[0] as f32 / 255.;
-                        dst[1] = components[1] as f32 / 255.;
-                        dst[2] = components[2] as f32 / 255.;
-                        dst[3] = components[3] as f32 / 255.;
-                    }
+            }
+            retro_pixel_format::RETRO_PIXEL_FORMAT_XRGB8888 => {
+                for (components, dst) in fb.chunks_exact(4).zip(slice.chunks_exact_mut(4)) {
+                    dst[0] = f32::from(components[0]) / 255.;
+                    dst[1] = f32::from(components[1]) / 255.;
+                    dst[2] = f32::from(components[2]) / 255.;
+                    dst[3] = f32::from(components[3]) / 255.;
                 }
-                retro_pixel_format::RETRO_PIXEL_FORMAT_RGB565 => {
-                    for (components, dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(4)) {
-                        let gb = components[0];
-                        let rg = components[1];
-                        let (red, green, blue) = rgb565to888(gb, rg);
-                        let alpha = 1.;
-                        dst[0] = red as f32 / 255.;
-                        dst[1] = green as f32 / 255.;
-                        dst[2] = blue as f32 / 255.;
-                        dst[3] = alpha;
-                    }
+            }
+            retro_pixel_format::RETRO_PIXEL_FORMAT_RGB565 => {
+                for (components, dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(4)) {
+                    let gb = components[0];
+                    let rg = components[1];
+                    let (red, green, blue) = rgb565to888(gb, rg);
+                    let alpha = 1.;
+                    dst[0] = f32::from(red) / 255.;
+                    dst[1] = f32::from(green) / 255.;
+                    dst[2] = f32::from(blue) / 255.;
+                    dst[3] = alpha;
                 }
-                _ => panic!("Unsupported pixel format"),
-            };
+            }
+            _ => panic!("Unsupported pixel format"),
         })
     }
 }
@@ -789,15 +852,15 @@ unsafe extern "C" fn callback_environment(cmd: u32, data: *mut c_void) -> bool {
                     true
                 }
                 RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY => unsafe {
-                    *(data as *mut *const c_char) = ctx.core_path.as_ptr();
+                    *(data.cast()) = ctx.core_path.as_ptr();
                     true
                 },
                 RETRO_ENVIRONMENT_GET_CAN_DUPE => unsafe {
-                    *(data as *mut bool) = true;
+                    *(data.cast()) = true;
                     true
                 },
                 RETRO_ENVIRONMENT_SET_MEMORY_MAPS => unsafe {
-                    let map = data as *const retro_memory_map;
+                    let map: *const retro_memory_map = data.cast();
                     let desc_slice = std::slice::from_raw_parts(
                         (*map).descriptors,
                         (*map).num_descriptors as usize,
@@ -826,7 +889,7 @@ extern "C" fn callback_video_refresh(data: *const c_void, width: u32, height: u3
             ctx.frame_pitch = pitch;
             ctx.frame_width = width;
             ctx.frame_height = height;
-        })
+        });
     }
 }
 extern "C" fn callback_audio_sample(left: i16, right: i16) {
@@ -836,7 +899,7 @@ extern "C" fn callback_audio_sample(left: i16, right: i16) {
         let sample_buf = &mut ctx.audio_sample;
         sample_buf.push(left);
         sample_buf.push(right);
-    })
+    });
 }
 extern "C" fn callback_audio_sample_batch(data: *const i16, frames: usize) -> usize {
     // Can't panic
@@ -856,17 +919,17 @@ extern "C" fn callback_input_state(port: u32, device: u32, index: u32, id: u32) 
     // Can't panic
     if port > 1 || device != 1 || index != 0 {
         // Unsupported port/device/index
-        println!("Unsupported port/device/index");
+        println!("Unsupported port/device/index {port}/{device}/{index}");
         return 0;
     }
     let port = port as usize;
     if id > 16 {
-        println!("Unexpected button id {}", id);
+        println!("Unexpected button id {id}");
         return 0;
     }
     CTX.with_borrow(|ctx| {
         let ctx = ctx.as_ref().unwrap();
-        if ctx.buttons[port].get(id) { 1 } else { 0 }
+        i16::from(ctx.buttons[port].get(id))
     })
 }
 
@@ -876,6 +939,7 @@ impl Drop for Emulator {
             (self.core.core.retro_unload_game)();
             (self.core.core.retro_deinit)();
         }
+        CTX.with_borrow_mut(Option::take);
     }
 }
 
@@ -936,7 +1000,7 @@ mod tests {
                 Buttons::new()
                     .start(i > 80 && i < 100)
                     .right(i >= 100)
-                    .a((i >= 100 && i <= 150) || (i >= 180)),
+                    .a((100..=150).contains(&i) || (i >= 180)),
                 Buttons::new(),
             ]);
         }
