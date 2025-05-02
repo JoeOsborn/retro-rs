@@ -1,18 +1,17 @@
 [package]
 name = "retro-rs"
-version = "0.3.2"
+version = "0.4.0"
 authors = ["Joseph C. Osborn <joseph.osborn@pomona.edu>"]
-edition = "2018"
+edition = "2024"
 description = "A Rust front-end for libretro cores."
 license = "Apache-2.0"
 repository = "https://github.com/JoeOsborn/retro-rs"
 
 [dependencies]
-libloading = "0.6.1"
-lazy_static = "1.3.0"
-libretro-sys = "0.1.1"
+libloading = "0.8.6"
+rust-libretro-sys = "0.3.2"
 libc = "0.2"
-image = {version="0.21.0",optional=true}
+image = {version="0.25.6",optional=true}
 
 [features]
 default = ["use_image"]
