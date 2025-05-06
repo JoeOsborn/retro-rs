@@ -479,7 +479,7 @@ impl Emulator {
     #[must_use]
     pub fn load(&mut self, bytes: &[u8]) -> bool {
         let size = self.save_size();
-        if bytes.len() >= size {
+        if bytes.len() < size {
             return false;
         }
         unsafe { (self.core.core.retro_unserialize)(bytes.as_ptr().cast(), size) }
