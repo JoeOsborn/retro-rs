@@ -475,6 +475,18 @@ impl Emulator {
     {
         CTX.with_borrow(|ctx| f(&ctx.as_ref().unwrap().audio_sample))
     }
+    #[must_use]
+    pub fn get_audio_sample_rate(&self) -> f64 {
+        CTX.with_borrow_mut(|ctx| {
+            ctx.as_ref().unwrap().av_info.timing.sample_rate
+        })
+    }
+    #[must_use]
+    pub fn get_video_fps(&self) -> f64 {
+        CTX.with_borrow_mut(|ctx| {
+            ctx.as_ref().unwrap().av_info.timing.fps
+        })
+    }
 
     #[must_use]
     pub fn save(&self, bytes: &mut [u8]) -> bool {
