@@ -1,8 +1,9 @@
 use crate::buttons::Buttons;
-use crate::error::*;
-use crate::pixels::*;
+use crate::error::RetroRsError;
+use crate::pixels::{argb555to888,rgb565to888,rgb888_to_rgb332};
 use libloading::Library;
 use libloading::Symbol;
+#[allow(clippy::wildcard_imports)]
 use rust_libretro_sys::*;
 use std::ffi::{CStr, CString, c_char, c_uint, c_void};
 use std::fs::File;
@@ -33,6 +34,7 @@ struct EmulatorCore {
     core: CoreFns,
     _marker: PhantomData<NotSendSync>,
 }
+
 #[allow(dead_code, clippy::struct_field_names)]
 struct CoreFns {
     retro_api_version: unsafe extern "C" fn() -> c_uint,
@@ -348,7 +350,6 @@ impl Emulator {
             std::slice::from_raw_parts(ptr, len)
         }
     }
-
     #[must_use]
     fn get_ram_mut(&mut self, ramtype: libc::c_uint) -> &mut [u8] {
         let len = self.get_ram_size(ramtype);
@@ -357,7 +358,6 @@ impl Emulator {
             std::slice::from_raw_parts_mut(ptr, len)
         }
     }
-
     #[allow(clippy::missing_panics_doc, clippy::unused_self)]
     #[must_use]
     pub fn memory_regions(&self) -> Vec<MemoryRegion> {
@@ -466,6 +466,14 @@ impl Emulator {
                 }
             }
         })
+    }
+    #[allow(clippy::missing_panics_doc, clippy::unused_self)]
+    #[must_use]
+    pub fn peek_audio_sample<AudioPeek, AudioPeekRet>(&self, f: AudioPeek) -> AudioPeekRet
+    where
+        AudioPeek: FnOnce(&[i16]) -> AudioPeekRet,
+    {
+        CTX.with_borrow(|ctx| f(&ctx.as_ref().unwrap().audio_sample))
     }
 
     #[must_use]
@@ -907,7 +915,6 @@ extern "C" fn callback_audio_sample_batch(data: *const i16, frames: usize) -> us
         let ctx = ctx.as_mut().unwrap();
         let sample_buf = &mut ctx.audio_sample;
         let slice = unsafe { std::slice::from_raw_parts(data, frames * 2) };
-        sample_buf.clear();
         sample_buf.extend_from_slice(slice);
         frames
     })

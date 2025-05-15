@@ -1,6 +1,6 @@
 extern crate image;
 use crate::emulator::Emulator;
-use crate::error::*;
+use crate::error::RetroRsError;
 use std::convert::TryInto;
 pub trait FramebufferToImageBuffer {
     /// # Errors
