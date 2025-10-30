@@ -1,6 +1,6 @@
 use crate::buttons::Buttons;
 use crate::error::RetroRsError;
-use crate::pixels::{argb555to888,rgb565to888,rgb888_to_rgb332};
+use crate::pixels::{argb555to888, rgb565to888, rgb888_to_rgb332};
 use libloading::Library;
 use libloading::Symbol;
 #[allow(clippy::wildcard_imports)]
@@ -64,10 +64,13 @@ struct CoreFns {
     retro_unserialize: unsafe extern "C" fn(*const c_void, usize) -> bool,
 }
 
+pub type ButtonCallback = Box<dyn Fn(u32, u32, u32, u32) -> i16>;
+
 #[allow(dead_code)]
 struct EmulatorContext {
     audio_sample: Vec<i16>,
     buttons: [Buttons; 2],
+    button_callback: Option<ButtonCallback>,
     core_path: CString,
     frame_ptr: *const c_void,
     frame_pitch: usize,
@@ -105,173 +108,173 @@ impl Emulator {
     #[must_use]
     #[allow(clippy::too_many_lines)]
     pub fn create(core_path: &Path, rom_path: &Path) -> Emulator {
-        let frontend = Frontend {
-            set_environment: callback_environment,
-            video_refresh: callback_video_refresh,
-            audio_sample: callback_audio_sample,
-            audio_sample_batch: callback_audio_sample_batch,
-            input_poll: callback_input_poll,
-            input_state: callback_input_state,
-        };
-        let suffix = if cfg!(target_os = "windows") {
-            "dll"
-        } else if cfg!(target_os = "macos") {
-            "dylib"
-        } else if cfg!(target_os = "linux") {
-            "so"
-        } else {
-            panic!("Unsupported platform")
-        };
-        let path: PathBuf = core_path.with_extension(suffix);
-        #[cfg(target_os = "linux")]
-        let dll: Library = unsafe {
-            use libc::RTLD_NODELETE;
-            use libloading::os::unix::{self, RTLD_LOCAL, RTLD_NOW};
-            // Load library with `RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE` to fix a SIGSEGV
-            unix::Library::open(Some(path), RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE)
-                .unwrap()
-                .into()
-        };
-        #[cfg(not(target_os = "linux"))]
-        let dll = unsafe { Library::new(path).unwrap() };
-        unsafe {
-            let retro_set_environment = *(dll.get(b"retro_set_environment").unwrap());
-            let retro_set_video_refresh = *(dll.get(b"retro_set_video_refresh").unwrap());
-            let retro_set_audio_sample = *(dll.get(b"retro_set_audio_sample").unwrap());
-            let retro_set_audio_sample_batch = *(dll.get(b"retro_set_audio_sample_batch").unwrap());
-            let retro_set_input_poll = *(dll.get(b"retro_set_input_poll").unwrap());
-            let retro_set_input_state = *(dll.get(b"retro_set_input_state").unwrap());
-            let retro_init = *(dll.get(b"retro_init").unwrap());
-            let retro_deinit = *(dll.get(b"retro_deinit").unwrap());
-            let retro_api_version = *(dll.get(b"retro_api_version").unwrap());
-            let retro_get_system_info = *(dll.get(b"retro_get_system_info").unwrap());
-            let retro_get_system_av_info = *(dll.get(b"retro_get_system_av_info").unwrap());
-            let retro_set_controller_port_device =
-                *(dll.get(b"retro_set_controller_port_device").unwrap());
-            let retro_reset = *(dll.get(b"retro_reset").unwrap());
-            let retro_run = *(dll.get(b"retro_run").unwrap());
-            let retro_serialize_size = *(dll.get(b"retro_serialize_size").unwrap());
-            let retro_serialize = *(dll.get(b"retro_serialize").unwrap());
-            let retro_unserialize = *(dll.get(b"retro_unserialize").unwrap());
-            let retro_cheat_reset = *(dll.get(b"retro_cheat_reset").unwrap());
-            let retro_cheat_set = *(dll.get(b"retro_cheat_set").unwrap());
-            let retro_load_game = *(dll.get(b"retro_load_game").unwrap());
-            let retro_load_game_special = *(dll.get(b"retro_load_game_special").unwrap());
-            let retro_unload_game = *(dll.get(b"retro_unload_game").unwrap());
-            let retro_get_region = *(dll.get(b"retro_get_region").unwrap());
-            let retro_get_memory_data = *(dll.get(b"retro_get_memory_data").unwrap());
-            let retro_get_memory_size = *(dll.get(b"retro_get_memory_size").unwrap());
-            let emu = EmulatorCore {
-                core_lib: dll,
-                rom_path: CString::new(rom_path.to_str().unwrap()).unwrap(),
-                core: CoreFns {
-                    retro_api_version,
-                    retro_cheat_reset,
-                    retro_cheat_set,
-                    retro_deinit,
-                    retro_get_memory_data,
-                    retro_get_memory_size,
-
-                    retro_get_region,
-                    retro_get_system_av_info,
-
-                    retro_get_system_info,
-
-                    retro_init,
-                    retro_load_game,
-                    retro_load_game_special,
-
-                    retro_reset,
-                    retro_run,
-
-                    retro_serialize,
-                    retro_serialize_size,
-                    retro_set_audio_sample,
-
-                    retro_set_audio_sample_batch,
-                    retro_set_controller_port_device,
-
-                    retro_set_environment,
-                    retro_set_input_poll,
-                    retro_set_input_state,
-
-                    retro_set_video_refresh,
-                    retro_unload_game,
-                    retro_unserialize,
-                },
-                _marker: PhantomData,
+        CTX.with_borrow_mut(move |ctx_opt| {
+            assert!(
+                ctx_opt.is_none(),
+                "Can't use multiple emulators in one thread currently"
+            );
+            let frontend = Frontend {
+                set_environment: callback_environment,
+                video_refresh: callback_video_refresh,
+                audio_sample: callback_audio_sample,
+                audio_sample_batch: callback_audio_sample_batch,
+                input_poll: callback_input_poll,
+                input_state: callback_input_state,
             };
-            let sys_info = retro_system_info {
-                library_name: ptr::null(),
-                library_version: ptr::null(),
-                valid_extensions: ptr::null(),
-                need_fullpath: false,
-                block_extract: false,
+            let suffix = if cfg!(target_os = "windows") {
+                "dll"
+            } else if cfg!(target_os = "macos") {
+                "dylib"
+            } else if cfg!(target_os = "linux") {
+                "so"
+            } else {
+                panic!("Unsupported platform")
             };
-            let av_info = retro_system_av_info {
-                geometry: retro_game_geometry {
-                    base_width: 0,
-                    base_height: 0,
-                    max_width: 0,
-                    max_height: 0,
-                    aspect_ratio: 0.0,
-                },
-                timing: retro_system_timing {
-                    fps: 0.0,
-                    sample_rate: 0.0,
-                },
+            let path: PathBuf = core_path.with_extension(suffix);
+            #[cfg(target_os = "linux")]
+            let dll: Library = unsafe {
+                use libc::RTLD_NODELETE;
+                use libloading::os::unix::{self, RTLD_LOCAL, RTLD_NOW};
+                // Load library with `RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE` to fix a SIGSEGV
+                unix::Library::open(Some(path), RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE)
+                    .unwrap()
+                    .into()
             };
+            #[cfg(not(target_os = "linux"))]
+            let dll = unsafe { Library::new(path).unwrap() };
+            unsafe {
+                let retro_set_environment = *(dll.get(b"retro_set_environment").unwrap());
+                let retro_set_video_refresh = *(dll.get(b"retro_set_video_refresh").unwrap());
+                let retro_set_audio_sample = *(dll.get(b"retro_set_audio_sample").unwrap());
+                let retro_set_audio_sample_batch =
+                    *(dll.get(b"retro_set_audio_sample_batch").unwrap());
+                let retro_set_input_poll = *(dll.get(b"retro_set_input_poll").unwrap());
+                let retro_set_input_state = *(dll.get(b"retro_set_input_state").unwrap());
+                let retro_init = *(dll.get(b"retro_init").unwrap());
+                let retro_deinit = *(dll.get(b"retro_deinit").unwrap());
+                let retro_api_version = *(dll.get(b"retro_api_version").unwrap());
+                let retro_get_system_info = *(dll.get(b"retro_get_system_info").unwrap());
+                let retro_get_system_av_info = *(dll.get(b"retro_get_system_av_info").unwrap());
+                let retro_set_controller_port_device =
+                    *(dll.get(b"retro_set_controller_port_device").unwrap());
+                let retro_reset = *(dll.get(b"retro_reset").unwrap());
+                let retro_run = *(dll.get(b"retro_run").unwrap());
+                let retro_serialize_size = *(dll.get(b"retro_serialize_size").unwrap());
+                let retro_serialize = *(dll.get(b"retro_serialize").unwrap());
+                let retro_unserialize = *(dll.get(b"retro_unserialize").unwrap());
+                let retro_cheat_reset = *(dll.get(b"retro_cheat_reset").unwrap());
+                let retro_cheat_set = *(dll.get(b"retro_cheat_set").unwrap());
+                let retro_load_game = *(dll.get(b"retro_load_game").unwrap());
+                let retro_load_game_special = *(dll.get(b"retro_load_game_special").unwrap());
+                let retro_unload_game = *(dll.get(b"retro_unload_game").unwrap());
+                let retro_get_region = *(dll.get(b"retro_get_region").unwrap());
+                let retro_get_memory_data = *(dll.get(b"retro_get_memory_data").unwrap());
+                let retro_get_memory_size = *(dll.get(b"retro_get_memory_size").unwrap());
+                let emu = EmulatorCore {
+                    core_lib: dll,
+                    rom_path: CString::new(rom_path.to_str().unwrap()).unwrap(),
+                    core: CoreFns {
+                        retro_api_version,
+                        retro_cheat_reset,
+                        retro_cheat_set,
+                        retro_deinit,
+                        retro_get_memory_data,
+                        retro_get_memory_size,
 
-            let ctx = EmulatorContext {
-                av_info,
-                sys_info,
-                core_path: CString::new(core_path.to_str().unwrap()).unwrap(),
-                frontend: frontend.clone(),
-                audio_sample: Vec::new(),
-                buttons: [Buttons::new(), Buttons::new()],
-                frame_ptr: ptr::null(),
-                frame_pitch: 0,
-                frame_width: 0,
-                frame_height: 0,
-                pixfmt: retro_pixel_format::RETRO_PIXEL_FORMAT_0RGB1555,
-                image_depth: 0,
-                memory_map: Vec::new(),
-                _marker: PhantomData,
-            };
-            CTX.with(|ctx_cell| {
-                assert!(
-                    ctx_cell.replace(Some(ctx)).is_none(),
-                    "Can't use multiple emulators in one thread currently"
-                );
-            });
-            // Set up callbacks
-            (emu.core.retro_set_environment)(Some(frontend.set_environment));
-            (emu.core.retro_set_video_refresh)(Some(frontend.video_refresh));
-            (emu.core.retro_set_audio_sample)(Some(frontend.audio_sample));
-            (emu.core.retro_set_audio_sample_batch)(Some(frontend.audio_sample_batch));
-            (emu.core.retro_set_input_poll)(Some(frontend.input_poll));
-            (emu.core.retro_set_input_state)(Some(frontend.input_state));
-            // Load the game
-            (emu.core.retro_init)();
-            let rom_cstr = emu.rom_path.clone();
-            let mut rom_file = File::open(rom_path).unwrap();
-            let mut buffer = Vec::new();
-            rom_file.read_to_end(&mut buffer).unwrap();
-            buffer.shrink_to_fit();
-            let game_info = retro_game_info {
-                path: rom_cstr.as_ptr(),
-                data: buffer.as_ptr().cast(),
-                size: buffer.len(),
-                meta: ptr::null(),
-            };
-            (emu.core.retro_load_game)(&game_info);
-            CTX.with_borrow_mut(|ctx_cell| {
-                let ctx = ctx_cell.as_mut().unwrap();
+                        retro_get_region,
+                        retro_get_system_av_info,
+
+                        retro_get_system_info,
+
+                        retro_init,
+                        retro_load_game,
+                        retro_load_game_special,
+
+                        retro_reset,
+                        retro_run,
+
+                        retro_serialize,
+                        retro_serialize_size,
+                        retro_set_audio_sample,
+
+                        retro_set_audio_sample_batch,
+                        retro_set_controller_port_device,
+
+                        retro_set_environment,
+                        retro_set_input_poll,
+                        retro_set_input_state,
+
+                        retro_set_video_refresh,
+                        retro_unload_game,
+                        retro_unserialize,
+                    },
+                    _marker: PhantomData,
+                };
+                let sys_info = retro_system_info {
+                    library_name: ptr::null(),
+                    library_version: ptr::null(),
+                    valid_extensions: ptr::null(),
+                    need_fullpath: false,
+                    block_extract: false,
+                };
+                let av_info = retro_system_av_info {
+                    geometry: retro_game_geometry {
+                        base_width: 0,
+                        base_height: 0,
+                        max_width: 0,
+                        max_height: 0,
+                        aspect_ratio: 0.0,
+                    },
+                    timing: retro_system_timing {
+                        fps: 0.0,
+                        sample_rate: 0.0,
+                    },
+                };
+
+                let mut ctx = EmulatorContext {
+                    av_info,
+                    sys_info,
+                    core_path: CString::new(core_path.to_str().unwrap()).unwrap(),
+                    frontend: frontend.clone(),
+                    audio_sample: Vec::new(),
+                    buttons: [Buttons::new(), Buttons::new()],
+                    button_callback: None,
+                    frame_ptr: ptr::null(),
+                    frame_pitch: 0,
+                    frame_width: 0,
+                    frame_height: 0,
+                    pixfmt: retro_pixel_format::RETRO_PIXEL_FORMAT_0RGB1555,
+                    image_depth: 0,
+                    memory_map: Vec::new(),
+                    _marker: PhantomData,
+                };
+                // Set up callbacks
+                (emu.core.retro_set_environment)(Some(frontend.set_environment));
+                (emu.core.retro_set_video_refresh)(Some(frontend.video_refresh));
+                (emu.core.retro_set_audio_sample)(Some(frontend.audio_sample));
+                (emu.core.retro_set_audio_sample_batch)(Some(frontend.audio_sample_batch));
+                (emu.core.retro_set_input_poll)(Some(frontend.input_poll));
+                (emu.core.retro_set_input_state)(Some(frontend.input_state));
+                // Load the game
+                (emu.core.retro_init)();
+                let rom_cstr = emu.rom_path.clone();
+                let mut rom_file = File::open(rom_path).unwrap();
+                let mut buffer = Vec::new();
+                rom_file.read_to_end(&mut buffer).unwrap();
+                buffer.shrink_to_fit();
+                let game_info = retro_game_info {
+                    path: rom_cstr.as_ptr(),
+                    data: buffer.as_ptr().cast(),
+                    size: buffer.len(),
+                    meta: ptr::null(),
+                };
+                (emu.core.retro_load_game)(&game_info);
                 (emu.core.retro_get_system_info)(&mut ctx.sys_info);
                 (emu.core.retro_get_system_av_info)(&mut ctx.av_info);
-            });
-            Emulator { core: emu }
-        }
+                *ctx_opt = Some(ctx);
+                Emulator { core: emu }
+            }
+        })
     }
     pub fn get_library(&mut self) -> &Library {
         &self.core.core_lib
@@ -290,6 +293,21 @@ impl Emulator {
             ctx.audio_sample.clear();
             //set inputs on CB
             ctx.buttons = inputs;
+            ctx.button_callback = None;
+        });
+        unsafe {
+            //run one step
+            (self.core.core.retro_run)();
+        }
+    }
+    #[allow(clippy::missing_panics_doc)]
+    pub fn run_with_button_callback(&mut self, input: Box<dyn Fn(u32, u32, u32, u32) -> i16>) {
+        CTX.with_borrow_mut(|ctx| {
+            let ctx = ctx.as_mut().unwrap();
+            //clear audio buffers and whatever else
+            ctx.audio_sample.clear();
+            //set inputs on CB
+            ctx.button_callback = Some(Box::new(input));
         });
         unsafe {
             //run one step
@@ -304,6 +322,7 @@ impl Emulator {
             ctx.audio_sample.clear();
             // set inputs on CB
             ctx.buttons = [Buttons::new(), Buttons::new()];
+            ctx.button_callback = None;
             // clear fb
             ctx.frame_ptr = ptr::null();
         });
@@ -392,7 +411,24 @@ impl Emulator {
                 continue;
             }
             if start >= mr.start && start < mr.start + mr.len {
-                return self.memory_ref_mut(&mr, start).map(|slice| &*slice);
+                return CTX.with_borrow(|ctx| {
+                    let maps = &ctx.as_ref().unwrap().memory_map;
+                    if mr.which >= maps.len() {
+                        // TODO more aggressive checking of mr vs map
+                        return Err(RetroRsError::RAMMapOutOfRangeError);
+                    }
+                    let start = (start - mr.start) & !mr.disconnect;
+                    let map = &maps[mr.which];
+                    //0-based at this point, modulo offset
+                    let ptr: *mut u8 = map.ptr.cast();
+                    let slice = unsafe {
+                        let ptr = ptr.add(start).add(map.offset);
+                        std::slice::from_raw_parts(ptr, map.len - start)
+                    };
+                    Ok(slice)
+                });
+            } else if start < mr.start {
+                return Err(RetroRsError::RAMCopySrcOutOfBoundsError);
             }
         }
         Err(RetroRsError::RAMCopyNotMappedIntoMemoryRegionError)
@@ -402,7 +438,7 @@ impl Emulator {
     /// [`RetroRsError::RAMMapOutOfRangeError`]: The desired address is out of mapped range
     /// [`RetroRsError::RAMCopySrcOutOfBoundsError`]: The desired range is not in the requested region
     pub fn memory_ref_mut(
-        &self,
+        &mut self,
         mr: &MemoryRegion,
         start: usize,
     ) -> Result<&mut [u8], RetroRsError> {
@@ -477,15 +513,11 @@ impl Emulator {
     }
     #[must_use]
     pub fn get_audio_sample_rate(&self) -> f64 {
-        CTX.with_borrow_mut(|ctx| {
-            ctx.as_ref().unwrap().av_info.timing.sample_rate
-        })
+        CTX.with_borrow_mut(|ctx| ctx.as_ref().unwrap().av_info.timing.sample_rate)
     }
     #[must_use]
     pub fn get_video_fps(&self) -> f64 {
-        CTX.with_borrow_mut(|ctx| {
-            ctx.as_ref().unwrap().av_info.timing.fps
-        })
+        CTX.with_borrow_mut(|ctx| ctx.as_ref().unwrap().av_info.timing.fps)
     }
 
     #[must_use]
@@ -941,14 +973,18 @@ extern "C" fn callback_input_state(port: u32, device: u32, index: u32, id: u32) 
         println!("Unsupported port/device/index {port}/{device}/{index}");
         return 0;
     }
-    let port = port as usize;
     if id > 16 {
         println!("Unexpected button id {id}");
         return 0;
     }
     CTX.with_borrow(|ctx| {
         let ctx = ctx.as_ref().unwrap();
-        i16::from(ctx.buttons[port].get(id))
+        if let Some(cb) = &ctx.button_callback {
+            cb(port, device, index, id)
+        } else {
+            let port = port as usize;
+            i16::from(ctx.buttons[port].get(id))
+        }
     })
 }
 
@@ -981,12 +1017,26 @@ mod tests {
     // emu.memory_ref(addr).expect("Couldn't read RAM!")[0]
     // }
 
+    #[test]
+    fn create_drop_create() {
+        // TODO change to a public domain rom or maybe 2048 core or something
+        let mut emu = Emulator::create(
+            Path::new("../../.config/retroarch/cores/fceumm_libretro0"),
+            Path::new("roms/mario.nes"),
+        );
+        drop(emu);
+        emu = Emulator::create(
+            Path::new("../../.config/retroarch/cores/fceumm_libretro1"),
+            Path::new("roms/mario.nes"),
+        );
+        drop(emu);
+    }
     #[cfg(feature = "use_image")]
     #[test]
     fn it_works() {
         // TODO change to a public domain rom or maybe 2048 core or something
         let mut emu = Emulator::create(
-            Path::new("../mechlearn/libretro-fceumm/fceumm_libretro"),
+            Path::new("../../.config/retroarch/cores/fceumm_libretro2"),
             Path::new("roms/mario.nes"),
         );
         emu.run([Buttons::new(), Buttons::new()]);
@@ -1024,6 +1074,43 @@ mod tests {
             ]);
         }
 
+        //emu will drop naturally
+    }
+    #[test]
+    fn it_works_with_callback() {
+        // TODO change to a public domain rom or maybe 2048 core or something
+        let mut emu = Emulator::create(
+            Path::new("../../.config/retroarch/cores/fceumm_libretro3"),
+            Path::new("roms/mario.nes"),
+        );
+        emu.run([Buttons::new(), Buttons::new()]);
+        emu.reset();
+        for i in 0..150 {
+            emu.run_with_button_callback(Box::new(move |port, _dev, _idx, id| {
+                if port == 0 {
+                    i16::from(
+                        Buttons::new()
+                            .start(i > 80 && i < 100)
+                            .right(i >= 100)
+                            .a((100..=150).contains(&i) || (i >= 180))
+                            .get(id),
+                    )
+                } else {
+                    0
+                }
+            }));
+        }
+        let mut died = false;
+        for _ in 0..10000 {
+            emu.run_with_button_callback(Box::new(|_port, _dev, _idx, id| {
+                i16::from(Buttons::new().right(true).get(id))
+            }));
+            if mario_is_dead(&emu) {
+                died = true;
+                break;
+            }
+        }
+        assert!(died);
         //emu will drop naturally
     }
 }
