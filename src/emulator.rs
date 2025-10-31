@@ -17,16 +17,6 @@ thread_local! {
     static CTX:std::cell::RefCell<Option<EmulatorContext>> = const{std::cell::RefCell::new(None)};
 }
 
-#[derive(Clone)]
-struct Frontend {
-    set_environment: unsafe extern "C" fn(c_uint, *mut c_void) -> bool,
-    video_refresh: unsafe extern "C" fn(*const c_void, c_uint, c_uint, usize),
-    audio_sample: unsafe extern "C" fn(i16, i16),
-    audio_sample_batch: unsafe extern "C" fn(*const i16, usize) -> usize,
-    input_poll: unsafe extern "C" fn(),
-    input_state: unsafe extern "C" fn(c_uint, c_uint, c_uint, c_uint) -> i16,
-}
-
 type NotSendSync = *const [u8; 0];
 struct EmulatorCore {
     core_lib: Library,
@@ -81,7 +71,6 @@ struct EmulatorContext {
     memory_map: Vec<retro_memory_descriptor>,
     av_info: retro_system_av_info,
     sys_info: retro_system_info,
-    frontend: Frontend,
     _marker: PhantomData<NotSendSync>,
 }
 
@@ -108,19 +97,11 @@ impl Emulator {
     #[must_use]
     #[allow(clippy::too_many_lines)]
     pub fn create(core_path: &Path, rom_path: &Path) -> Emulator {
-        CTX.with_borrow_mut(move |ctx_opt| {
+        let emu = CTX.with_borrow_mut(move |ctx_opt| {
             assert!(
                 ctx_opt.is_none(),
                 "Can't use multiple emulators in one thread currently"
             );
-            let frontend = Frontend {
-                set_environment: callback_environment,
-                video_refresh: callback_video_refresh,
-                audio_sample: callback_audio_sample,
-                audio_sample_batch: callback_audio_sample_batch,
-                input_poll: callback_input_poll,
-                input_state: callback_input_state,
-            };
             let suffix = if cfg!(target_os = "windows") {
                 "dll"
             } else if cfg!(target_os = "macos") {
@@ -235,7 +216,6 @@ impl Emulator {
                     av_info,
                     sys_info,
                     core_path: CString::new(core_path.to_str().unwrap()).unwrap(),
-                    frontend: frontend.clone(),
                     audio_sample: Vec::new(),
                     buttons: [Buttons::new(), Buttons::new()],
                     button_callback: None,
@@ -248,33 +228,37 @@ impl Emulator {
                     memory_map: Vec::new(),
                     _marker: PhantomData,
                 };
-                // Set up callbacks
-                (emu.core.retro_set_environment)(Some(frontend.set_environment));
-                (emu.core.retro_set_video_refresh)(Some(frontend.video_refresh));
-                (emu.core.retro_set_audio_sample)(Some(frontend.audio_sample));
-                (emu.core.retro_set_audio_sample_batch)(Some(frontend.audio_sample_batch));
-                (emu.core.retro_set_input_poll)(Some(frontend.input_poll));
-                (emu.core.retro_set_input_state)(Some(frontend.input_state));
-                // Load the game
-                (emu.core.retro_init)();
-                let rom_cstr = emu.rom_path.clone();
-                let mut rom_file = File::open(rom_path).unwrap();
-                let mut buffer = Vec::new();
-                rom_file.read_to_end(&mut buffer).unwrap();
-                buffer.shrink_to_fit();
-                let game_info = retro_game_info {
-                    path: rom_cstr.as_ptr(),
-                    data: buffer.as_ptr().cast(),
-                    size: buffer.len(),
-                    meta: ptr::null(),
-                };
-                (emu.core.retro_load_game)(&game_info);
-                (emu.core.retro_get_system_info)(&mut ctx.sys_info);
-                (emu.core.retro_get_system_av_info)(&mut ctx.av_info);
+                (emu.core.retro_get_system_info)(&raw mut ctx.sys_info);
+                (emu.core.retro_get_system_av_info)(&raw mut ctx.av_info);
+
                 *ctx_opt = Some(ctx);
-                Emulator { core: emu }
+                emu
             }
-        })
+        });
+        unsafe {
+            // Set up callbacks
+            (emu.core.retro_set_environment)(Some(callback_environment));
+            (emu.core.retro_set_video_refresh)(Some(callback_video_refresh));
+            (emu.core.retro_set_audio_sample)(Some(callback_audio_sample));
+            (emu.core.retro_set_audio_sample_batch)(Some(callback_audio_sample_batch));
+            (emu.core.retro_set_input_poll)(Some(callback_input_poll));
+            (emu.core.retro_set_input_state)(Some(callback_input_state));
+            // Load the game
+            (emu.core.retro_init)();
+            let rom_cstr = emu.rom_path.clone();
+            let mut rom_file = File::open(rom_path).unwrap();
+            let mut buffer = Vec::new();
+            rom_file.read_to_end(&mut buffer).unwrap();
+            buffer.shrink_to_fit();
+            let game_info = retro_game_info {
+                path: rom_cstr.as_ptr(),
+                data: buffer.as_ptr().cast(),
+                size: buffer.len(),
+                meta: ptr::null(),
+            };
+            (emu.core.retro_load_game)(&raw const game_info);
+        }
+        Emulator { core: emu }
     }
     pub fn get_library(&mut self) -> &Library {
         &self.core.core_lib
