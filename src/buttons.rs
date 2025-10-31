@@ -9,7 +9,11 @@ use rust_libretro_sys::{
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Debug)]
 pub struct Buttons(i16);
-
+impl From<Buttons> for i16 {
+    fn from(value: Buttons) -> Self {
+        value.0
+    }
+}
 impl Buttons {
     #[must_use]
     pub fn new() -> Self {

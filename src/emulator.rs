@@ -908,6 +908,7 @@ unsafe extern "C" fn callback_environment(cmd: u32, data: *mut c_void) -> bool {
                     // (Implicitly we also want to drop the old one, which we did by reassigning)
                     true
                 },
+                RETRO_ENVIRONMENT_GET_INPUT_BITMASKS => true,
                 _ => false,
             }
         })
@@ -957,14 +958,14 @@ extern "C" fn callback_input_state(port: u32, device: u32, index: u32, id: u32) 
         println!("Unsupported port/device/index {port}/{device}/{index}");
         return 0;
     }
-    if id > 16 {
-        println!("Unexpected button id {id}");
-        return 0;
-    }
+    let bitmask_enabled = (device == RETRO_DEVICE_JOYPAD) && (id == RETRO_DEVICE_ID_JOYPAD_MASK);
     CTX.with_borrow(|ctx| {
         let ctx = ctx.as_ref().unwrap();
         if let Some(cb) = &ctx.button_callback {
             cb(port, device, index, id)
+        } else if bitmask_enabled {
+            let port = port as usize;
+            i16::from(ctx.buttons[port])
         } else {
             let port = port as usize;
             i16::from(ctx.buttons[port].get(id))
