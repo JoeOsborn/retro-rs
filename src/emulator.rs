@@ -1073,13 +1073,15 @@ mod tests {
         for i in 0..150 {
             emu.run_with_button_callback(Box::new(move |port, _dev, _idx, id| {
                 if port == 0 {
-                    i16::from(
-                        Buttons::new()
-                            .start(i > 80 && i < 100)
-                            .right(i >= 100)
-                            .a((100..=150).contains(&i) || (i >= 180))
-                            .get(id),
-                    )
+                    let buttons = Buttons::new()
+                        .start(i > 80 && i < 100)
+                        .right(i >= 100)
+                        .a((100..=150).contains(&i) || (i >= 180));
+                    if id == RETRO_DEVICE_ID_JOYPAD_MASK {
+                        i16::from(buttons)
+                    } else {
+                        i16::from(buttons.get(id))
+                    }
                 } else {
                     0
                 }
@@ -1088,7 +1090,12 @@ mod tests {
         let mut died = false;
         for _ in 0..10000 {
             emu.run_with_button_callback(Box::new(|_port, _dev, _idx, id| {
-                i16::from(Buttons::new().right(true).get(id))
+                let buttons = Buttons::new().right(true);
+                if id == RETRO_DEVICE_ID_JOYPAD_MASK {
+                    i16::from(buttons)
+                } else {
+                    i16::from(buttons.get(id))
+                }
             }));
             if mario_is_dead(&emu) {
                 died = true;
