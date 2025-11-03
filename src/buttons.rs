@@ -14,6 +14,11 @@ impl From<Buttons> for i16 {
         value.0
     }
 }
+impl From<i16> for Buttons {
+    fn from(value: i16) -> Self {
+        Self(value)
+    }
+}
 impl Buttons {
     #[must_use]
     pub fn new() -> Self {
