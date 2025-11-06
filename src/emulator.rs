@@ -257,6 +257,11 @@ impl Emulator {
                 meta: ptr::null(),
             };
             (emu.core.retro_load_game)(&raw const game_info);
+            CTX.with_borrow_mut(|ctx| {
+                let ctx = ctx.as_mut().unwrap();
+                (emu.core.retro_get_system_info)(&raw mut ctx.sys_info);
+                (emu.core.retro_get_system_av_info)(&raw mut ctx.av_info);
+            });
         }
         Emulator { core: emu }
     }
@@ -467,7 +472,7 @@ impl Emulator {
     #[allow(clippy::missing_panics_doc, clippy::unused_self)]
     /// # Errors
     /// [`RetroRsError::NoFramebufferError`]: Emulator has not created a framebuffer.
-    fn peek_framebuffer<FBPeek, FBPeekRet>(&self, f: FBPeek) -> Result<FBPeekRet, RetroRsError>
+    pub fn peek_framebuffer<FBPeek, FBPeekRet>(&self, f: FBPeek) -> Result<FBPeekRet, RetroRsError>
     where
         FBPeek: FnOnce(&[u8]) -> FBPeekRet,
     {
@@ -488,7 +493,6 @@ impl Emulator {
         })
     }
     #[allow(clippy::missing_panics_doc, clippy::unused_self)]
-    #[must_use]
     pub fn peek_audio_sample<AudioPeek, AudioPeekRet>(&self, f: AudioPeek) -> AudioPeekRet
     where
         AudioPeek: FnOnce(&[i16]) -> AudioPeekRet,

@@ -1,6 +1,6 @@
 [package]
 name = "retro-rs"
-version = "0.5.3"
+version = "0.5.5"
 authors = ["Joseph C. Osborn <joseph.osborn@pomona.edu>"]
 edition = "2024"
 description = "A Rust front-end for libretro cores."
