@@ -507,6 +507,10 @@ impl Emulator {
     pub fn get_video_fps(&self) -> f64 {
         CTX.with_borrow_mut(|ctx| ctx.as_ref().unwrap().av_info.timing.fps)
     }
+    #[must_use]
+    pub fn get_aspect_ratio(&self) -> f32 {
+        CTX.with_borrow_mut(|ctx| ctx.as_ref().unwrap().av_info.geometry.aspect_ratio)
+    }
 
     #[must_use]
     pub fn save(&self, bytes: &mut [u8]) -> bool {
