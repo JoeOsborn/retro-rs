@@ -1,6 +1,8 @@
 use crate::buttons::Buttons;
 use crate::error::RetroRsError;
+use crate::gfx::Gfx;
 use crate::pixels::{argb555to888, rgb565to888, rgb888_to_rgb332};
+
 use libloading::Library;
 use libloading::Symbol;
 #[allow(clippy::wildcard_imports)]
@@ -71,6 +73,7 @@ struct EmulatorContext {
     memory_map: Vec<retro_memory_descriptor>,
     av_info: retro_system_av_info,
     sys_info: retro_system_info,
+    gfx: Box<dyn Gfx>,
     _marker: PhantomData<NotSendSync>,
 }
 
@@ -95,8 +98,14 @@ impl Emulator {
     /// # Panics
     /// If the platform is not Windows, Mac, or Linux; if the dylib fails to load successfully; if any Emulator has been created on this thread but not yet dropped.
     #[must_use]
-    #[allow(clippy::too_many_lines)]
     pub fn create(core_path: &Path, rom_path: &Path) -> Emulator {
+        Self::create_with_gfx(core_path, rom_path, Box::new(crate::SoftwareGfx::default()))
+    }
+    /// # Panics
+    /// If the platform is not Windows, Mac, or Linux; if the dylib fails to load successfully; if any Emulator has been created on this thread but not yet dropped.
+    #[must_use]
+    #[allow(clippy::too_many_lines)]
+    pub fn create_with_gfx(core_path: &Path, rom_path: &Path, gfx: Box<dyn Gfx>) -> Emulator {
         let emu = CTX.with_borrow_mut(move |ctx_opt| {
             assert!(
                 ctx_opt.is_none(),
@@ -226,6 +235,7 @@ impl Emulator {
                     pixfmt: retro_pixel_format::RETRO_PIXEL_FORMAT_0RGB1555,
                     image_depth: 0,
                     memory_map: Vec::new(),
+                    gfx,
                     _marker: PhantomData,
                 };
                 (emu.core.retro_get_system_info)(&raw mut ctx.sys_info);
@@ -912,7 +922,16 @@ unsafe extern "C" fn callback_environment(cmd: u32, data: *mut c_void) -> bool {
                     // (Implicitly we also want to drop the old one, which we did by reassigning)
                     true
                 },
-                RETRO_ENVIRONMENT_GET_INPUT_BITMASKS => true,
+                RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER => unsafe {
+                    *(data.cast()) = ctx.gfx.preferred_api() as c_uint;
+                    true
+                },
+                RETRO_ENVIRONMENT_SET_HW_RENDER => unsafe {
+                    /* todo create or provide opengl context */
+                    let hw_render_cb: *mut retro_hw_render_callback = data.cast();
+                    ctx.gfx
+                        .prepare_hardware_context(ctx.av_info, hw_render_cb.as_mut().unwrap())
+                },
                 _ => false,
             }
         })
