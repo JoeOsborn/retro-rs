@@ -14,7 +14,7 @@ mod fb_to_image;
 pub use fb_to_image::*;
 pub use rust_libretro_sys as libretro;
 
-#[cfg(feature = "gl")]
+#[cfg(feature = "use_gl")]
 mod gl_gfx;
-#[cfg(feature = "gl")]
+#[cfg(feature = "use_gl")]
 pub use gl_gfx::GlGfx;

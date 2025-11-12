@@ -15,6 +15,10 @@ use std::panic;
 use std::path::{Path, PathBuf};
 use std::ptr;
 
+unsafe extern "C" {
+    fn retrors_log_print(lev: retro_log_level, fmt: *const i8, ...);
+}
+
 thread_local! {
     static CTX:std::cell::RefCell<Option<EmulatorContext>> = const{std::cell::RefCell::new(None)};
 }
@@ -121,6 +125,7 @@ impl Emulator {
                 panic!("Unsupported platform")
             };
             let path: PathBuf = core_path.with_extension(suffix);
+            let core_path = core_path.parent().unwrap();
             #[cfg(target_os = "linux")]
             let dll: Library = unsafe {
                 use libc::RTLD_NODELETE;
@@ -221,7 +226,7 @@ impl Emulator {
                     },
                 };
 
-                let mut ctx = EmulatorContext {
+                let ctx = EmulatorContext {
                     av_info,
                     sys_info,
                     core_path: CString::new(core_path.to_str().unwrap()).unwrap(),
@@ -238,9 +243,6 @@ impl Emulator {
                     gfx,
                     _marker: PhantomData,
                 };
-                (emu.core.retro_get_system_info)(&raw mut ctx.sys_info);
-                (emu.core.retro_get_system_av_info)(&raw mut ctx.av_info);
-
                 *ctx_opt = Some(ctx);
                 emu
             }
@@ -253,7 +255,7 @@ impl Emulator {
             (emu.core.retro_set_audio_sample_batch)(Some(callback_audio_sample_batch));
             (emu.core.retro_set_input_poll)(Some(callback_input_poll));
             (emu.core.retro_set_input_state)(Some(callback_input_state));
-            // Load the game
+            // Load the core and game
             (emu.core.retro_init)();
             let rom_cstr = emu.rom_path.clone();
             let mut rom_file = File::open(rom_path).unwrap();
@@ -293,11 +295,16 @@ impl Emulator {
             //set inputs on CB
             ctx.buttons = inputs;
             ctx.button_callback = None;
+            ctx.gfx.bind();
         });
         unsafe {
             //run one step
             (self.core.core.retro_run)();
         }
+        CTX.with_borrow_mut(|ctx| {
+            let ctx = ctx.as_mut().unwrap();
+            ctx.gfx.unbind();
+        });
     }
     #[allow(clippy::missing_panics_doc)]
     pub fn run_with_button_callback(&mut self, input: Box<dyn Fn(u32, u32, u32, u32) -> i16>) {
@@ -307,11 +314,16 @@ impl Emulator {
             ctx.audio_sample.clear();
             //set inputs on CB
             ctx.button_callback = Some(Box::new(input));
+            ctx.gfx.bind();
         });
         unsafe {
             //run one step
             (self.core.core.retro_run)();
         }
+        CTX.with_borrow_mut(|ctx| {
+            let ctx = ctx.as_mut().unwrap();
+            ctx.gfx.unbind();
+        });
     }
     #[allow(clippy::missing_panics_doc)]
     pub fn reset(&mut self) {
@@ -404,6 +416,8 @@ impl Emulator {
     }
     /// # Errors
     /// [`RetroRsError::RAMCopyNotMappedIntoMemoryRegionError`]: Returns an error if the desired address is not mapped into memory regions
+    /// # Panics
+    /// If called on a thread without a running emulator core
     pub fn memory_ref(&self, start: usize) -> Result<&[u8], RetroRsError> {
         for mr in self.memory_regions() {
             if mr.select != 0 && (start & mr.select) == 0 {
@@ -492,6 +506,10 @@ impl Emulator {
                 Err(RetroRsError::NoFramebufferError)
             } else {
                 unsafe {
+                    ctx.gfx.sync_framebuffer(std::slice::from_raw_parts_mut(
+                        ctx.frame_ptr.cast_mut().cast(),
+                        ctx.frame_pitch * ctx.frame_height as usize,
+                    ));
                     #[allow(clippy::cast_possible_truncation)]
                     let frame_slice = std::slice::from_raw_parts(
                         ctx.frame_ptr.cast(),
@@ -509,10 +527,14 @@ impl Emulator {
     {
         CTX.with_borrow(|ctx| f(&ctx.as_ref().unwrap().audio_sample))
     }
+    /// # Panics
+    /// If called on a thread without a running emulator core
     #[must_use]
     pub fn get_audio_sample_rate(&self) -> f64 {
         CTX.with_borrow_mut(|ctx| ctx.as_ref().unwrap().av_info.timing.sample_rate)
     }
+    /// # Panics
+    /// If called on a thread without a running emulator core
     #[must_use]
     pub fn get_video_fps(&self) -> f64 {
         CTX.with_borrow_mut(|ctx| ctx.as_ref().unwrap().av_info.timing.fps)
@@ -887,54 +909,101 @@ impl Emulator {
 unsafe extern "C" fn callback_environment(cmd: u32, data: *mut c_void) -> bool {
     let result = panic::catch_unwind(|| {
         CTX.with_borrow_mut(|ctx| {
-            let ctx = ctx.as_mut().unwrap();
-            match cmd {
-                RETRO_ENVIRONMENT_SET_CONTROLLER_INFO => true,
-                RETRO_ENVIRONMENT_SET_PIXEL_FORMAT => {
-                    let pixfmt = unsafe { *(data as *const retro_pixel_format) };
-                    ctx.image_depth = match pixfmt {
-                        retro_pixel_format::RETRO_PIXEL_FORMAT_0RGB1555 => 15,
-                        retro_pixel_format::RETRO_PIXEL_FORMAT_XRGB8888 => 32,
-                        retro_pixel_format::RETRO_PIXEL_FORMAT_RGB565 => 16,
-                        _ => panic!("Unsupported pixel format"),
-                    };
-                    ctx.pixfmt = pixfmt;
-                    true
+                let ctx = ctx.as_mut().unwrap();
+                match cmd {
+                    RETRO_ENVIRONMENT_SET_CONTROLLER_INFO => true,
+                    RETRO_ENVIRONMENT_SET_PIXEL_FORMAT => {
+                        let pixfmt = unsafe { *(data as *const retro_pixel_format) };
+                        dbg!(pixfmt);
+                        ctx.image_depth = match pixfmt {
+                            retro_pixel_format::RETRO_PIXEL_FORMAT_0RGB1555 => 15,
+                            retro_pixel_format::RETRO_PIXEL_FORMAT_XRGB8888 => 32,
+                            retro_pixel_format::RETRO_PIXEL_FORMAT_RGB565 => 16,
+                            _ => panic!("Unsupported pixel format"),
+                        };
+                        ctx.pixfmt = pixfmt;
+                        true
+                    }
+                    RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY
+                    | RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY => unsafe {
+                        *(data.cast()) = ctx.core_path.as_ptr();
+                        true
+                    },
+                    RETRO_ENVIRONMENT_GET_CAN_DUPE => unsafe {
+                        *(data.cast()) = true;
+                        true
+                    },
+                    RETRO_ENVIRONMENT_SET_MEMORY_MAPS => unsafe {
+                        let map: *const retro_memory_map = data.cast();
+                        let desc_slice = std::slice::from_raw_parts(
+                            (*map).descriptors,
+                            (*map).num_descriptors as usize,
+                        );
+                        // Don't know who owns map or how long it will last
+                        ctx.memory_map = Vec::new();
+                        // So we had better copy it
+                        ctx.memory_map.extend_from_slice(desc_slice);
+                        // (Implicitly we also want to drop the old one, which we did by reassigning)
+                        true
+                    },
+                    RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER => unsafe {
+                        *(data.cast()) = ctx.gfx.preferred_api() as c_uint;
+                        true
+                    },
+                    RETRO_ENVIRONMENT_SET_HW_RENDER => unsafe {
+                        /* todo create or provide opengl context */
+                        let hw_render_cb: *mut retro_hw_render_callback = data.cast();
+                        ctx.gfx
+                            .prepare_hardware_context(ctx.av_info, hw_render_cb.as_mut().unwrap())
+                    },
+                    RETRO_ENVIRONMENT_GET_LOG_INTERFACE => unsafe {
+                        let log_cb: *mut retro_log_callback = data.cast();
+                        *log_cb = retro_log_callback {
+                            log: Some(retrors_log_print),
+                        };
+                        true
+                    },
+                    RETRO_ENVIRONMENT_GET_VARIABLE => unsafe {
+                        let var: *mut retro_variable = data.cast();
+                        let var = var.as_mut().unwrap();
+                        let key = CStr::from_ptr(var.key.cast()).to_str().unwrap();
+                        #[allow(clippy::match_same_arms)]
+                        match key {
+                            "ppsspp_internal_resolution" => {
+                                var.value = c"480x272".as_ptr().cast();
+                                true
+                            },
+                            "ppsspp_backend" => {
+                                var.value = c"opengl".as_ptr().cast();
+                                true
+                            },
+                            "ppsspp_psp_model" => {
+                                var.value = c"psp_2000_3000".as_ptr().cast();
+                                true
+                            },
+                            "ppsspp_cache_iso" => { var.value =c"disabled".as_ptr().cast(); true },
+                            "ppsspp_change_mac_address01" => { var.value =c"e".as_ptr().cast(); true },
+                            "ppsspp_change_mac_address02" => { var.value =c"c".as_ptr().cast(); true },
+                            "ppsspp_change_mac_address03" => { var.value =c"c".as_ptr().cast(); true },
+                            "ppsspp_change_mac_address04" => { var.value =c"a".as_ptr().cast(); true },
+                            "ppsspp_change_mac_address05" => { var.value =c"4".as_ptr().cast(); true },
+                            "ppsspp_change_mac_address06" => { var.value =c"7".as_ptr().cast(); true },
+                            "ppsspp_change_mac_address07" => { var.value =c"b".as_ptr().cast(); true },
+                            "ppsspp_change_mac_address08" => { var.value =c"c".as_ptr().cast(); true },
+                            "ppsspp_change_mac_address09" => { var.value =c"5".as_ptr().cast(); true },
+                            "ppsspp_change_mac_address10" => { var.value =c"b".as_ptr().cast(); true },
+                            "ppsspp_change_mac_address11" => { var.value =c"1".as_ptr().cast(); true },
+                            "ppsspp_change_mac_address12" => { var.value =c"d".as_ptr().cast(); true },
+                            _ => false,
+                        }
+                    },
+                    RETRO_ENVIRONMENT_SHUTDOWN => {
+                        ctx.gfx.destroy_context();
+                        true
+                    },
+                    _ => false,
                 }
-                RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY => unsafe {
-                    *(data.cast()) = ctx.core_path.as_ptr();
-                    true
-                },
-                RETRO_ENVIRONMENT_GET_CAN_DUPE => unsafe {
-                    *(data.cast()) = true;
-                    true
-                },
-                RETRO_ENVIRONMENT_SET_MEMORY_MAPS => unsafe {
-                    let map: *const retro_memory_map = data.cast();
-                    let desc_slice = std::slice::from_raw_parts(
-                        (*map).descriptors,
-                        (*map).num_descriptors as usize,
-                    );
-                    // Don't know who owns map or how long it will last
-                    ctx.memory_map = Vec::new();
-                    // So we had better copy it
-                    ctx.memory_map.extend_from_slice(desc_slice);
-                    // (Implicitly we also want to drop the old one, which we did by reassigning)
-                    true
-                },
-                RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER => unsafe {
-                    *(data.cast()) = ctx.gfx.preferred_api() as c_uint;
-                    true
-                },
-                RETRO_ENVIRONMENT_SET_HW_RENDER => unsafe {
-                    /* todo create or provide opengl context */
-                    let hw_render_cb: *mut retro_hw_render_callback = data.cast();
-                    ctx.gfx
-                        .prepare_hardware_context(ctx.av_info, hw_render_cb.as_mut().unwrap())
-                },
-                _ => false,
-            }
-        })
+            })
     });
     result.unwrap_or(false)
 }
@@ -945,10 +1014,41 @@ extern "C" fn callback_video_refresh(data: *const c_void, width: u32, height: u3
     if !data.is_null() {
         CTX.with_borrow_mut(|ctx| {
             let ctx = ctx.as_mut().unwrap();
-            ctx.frame_ptr = data;
+            let pitch = if pitch == 0 {
+                width as usize * 4
+            } else {
+                pitch
+            };
+            if data as isize == -1 {
+                if width != ctx.frame_width
+                    || height != ctx.frame_height
+                    || pitch != ctx.frame_pitch
+                {
+                    unsafe {
+                        if !ctx.frame_ptr.is_null() {
+                            drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+                                ctx.frame_ptr.cast::<u8>().cast_mut(),
+                                ctx.frame_pitch * ctx.frame_height as usize,
+                            )));
+                        }
+                        ctx.pixfmt = retro_pixel_format::RETRO_PIXEL_FORMAT_XRGB8888;
+                        println!(
+                            "real size is {height} * {pitch} = {}",
+                            height as usize * pitch
+                        );
+                        ctx.frame_ptr =
+                            Box::leak(vec![255; height as usize * pitch].into_boxed_slice())
+                                .as_ptr()
+                                .cast();
+                    }
+                }
+            } else {
+                ctx.frame_ptr = data;
+            }
             ctx.frame_pitch = pitch;
             ctx.frame_width = width;
             ctx.frame_height = height;
+            ctx.gfx.video_refresh(width, height, pitch);
         });
     }
 }
@@ -978,7 +1078,7 @@ extern "C" fn callback_input_state(port: u32, device: u32, index: u32, id: u32) 
     // Can't panic
     if port > 1 || device != 1 || index != 0 {
         // Unsupported port/device/index
-        println!("Unsupported port/device/index {port}/{device}/{index}");
+        // println!("Unsupported port/device/index {port}/{device}/{index}");
         return 0;
     }
     let bitmask_enabled = (device == RETRO_DEVICE_JOYPAD) && (id == RETRO_DEVICE_ID_JOYPAD_MASK);
@@ -1029,7 +1129,7 @@ mod tests {
     fn create_drop_create() {
         // TODO change to a public domain rom or maybe 2048 core or something
         let mut emu = Emulator::create(
-            Path::new("../../.config/retroarch/cores/fceumm_libretro0"),
+            Path::new("../../.config/retroarch/cores/fceumm_libretro"),
             Path::new("roms/mario.nes"),
         );
         drop(emu);
@@ -1127,5 +1227,36 @@ mod tests {
         }
         assert!(died);
         //emu will drop naturally
+    }
+    #[test]
+    fn hw_works() {
+        // use renderdoc::RenderDoc;
+        // let mut renderdoc: RenderDoc<renderdoc::V110> = RenderDoc::new().unwrap();
+        let mut emu = Emulator::create_with_gfx(
+            Path::new("cores/ppsspp_libretro"),
+            Path::new("roms/patapon.iso"),
+            Box::new(crate::GlGfx::default()),
+        );
+        emu.run([Buttons::new(), Buttons::new()]);
+        for _ in 0..600 {
+            emu.run([Buttons::new(), Buttons::new()]);
+        }
+        // renderdoc.start_frame_capture(std::ptr::null(), std::ptr::null());
+        emu.run([Buttons::new(), Buttons::new()]);
+        // renderdoc.end_frame_capture(std::ptr::null(), std::ptr::null());
+        let mut pixels = vec![255_u8; 480 * 272 * 4];
+        emu.copy_framebuffer_rgba8888(&mut pixels).unwrap();
+
+        image::save_buffer(
+            "petscop.png",
+            &pixels,
+            480,
+            272,
+            image::ExtendedColorType::Rgba8,
+        )
+        .unwrap();
+        // loop {
+        // std::thread::sleep_ms(500);
+        // }
     }
 }
