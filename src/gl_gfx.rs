@@ -174,7 +174,21 @@ impl GlGfxData {
                 pix.swap(0, 3);
                 pix.swap(1, 2);
             }
-
+            for line in 0..(self.h as usize / 2) {
+                let pitch = (self.w * 4) as usize;
+                let line_n = self.h as usize - 1 - line;
+                if line_n == line {
+                    break;
+                }
+                let line0_start = line * pitch;
+                let line0_end = line0_start + pitch;
+                let line_n_start = line_n * pitch;
+                let line_n_end = line_n_start + pitch;
+                let [l0, l_n] = fb
+                    .get_disjoint_mut([line0_start..line0_end, line_n_start..line_n_end])
+                    .unwrap();
+                l0.swap_with_slice(l_n);
+            }
             println!("glReadPixels err {:x}", gl::GetError());
             // self.unbind();
         }
