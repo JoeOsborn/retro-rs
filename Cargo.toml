@@ -1,6 +1,6 @@
 [package]
 name = "retro-rs"
-version = "0.6.0"
+version = "0.6.1"
 authors = ["Joseph C. Osborn <joseph.osborn@pomona.edu>"]
 edition = "2024"
 description = "A Rust front-end for libretro cores."
@@ -8,7 +8,7 @@ license = "Apache-2.0"
 repository = "https://github.com/JoeOsborn/retro-rs"
 
 [dependencies]
-libloading = "0.9"
+libloading = ">=0.8.9,<=0.9"
 gisst-rust-libretro-sys = "0.4"
 libc = "0.2"
 euclid = {version="0.22", optional=true}
