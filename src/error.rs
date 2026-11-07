@@ -3,7 +3,6 @@ use std::fmt::Display;
 #[derive(Debug)]
 pub enum RetroRsError {
     NoFramebufferError,
-    ImageBufferError,
     TryFromIntError(std::num::TryFromIntError),
     RAMCopyDestTooSmallError,
     RAMCopySrcOutOfBoundsError,
@@ -22,7 +21,6 @@ impl Display for RetroRsError {
             RetroRsError::NoFramebufferError => {
                 write!(f, "This emulator does not have a framebuffer yet.")
             }
-            RetroRsError::ImageBufferError => write!(f, "Failure in creating image buffer"),
             RetroRsError::TryFromIntError(ref err) => err.fmt(f),
             RetroRsError::RAMCopyDestTooSmallError => {
                 write!(f, "Destination for RAM copy too small")

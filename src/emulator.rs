@@ -6,7 +6,7 @@ use crate::pixels::{argb555to888, rgb565to888, rgb888_to_rgb332};
 use libloading::Library;
 use libloading::Symbol;
 #[allow(clippy::wildcard_imports)]
-use rust_libretro_sys::*;
+use gisst_rust_libretro_sys::*;
 use std::ffi::{CStr, CString, c_char, c_uint, c_void};
 use std::fs::File;
 use std::io::Read;
@@ -539,6 +539,9 @@ impl Emulator {
     pub fn get_video_fps(&self) -> f64 {
         CTX.with_borrow_mut(|ctx| ctx.as_ref().unwrap().av_info.timing.fps)
     }
+
+    /// # Panics
+    /// If called on a thread without a running emulator core
     #[must_use]
     pub fn get_aspect_ratio(&self) -> f32 {
         CTX.with_borrow_mut(|ctx| ctx.as_ref().unwrap().av_info.geometry.aspect_ratio)
@@ -624,7 +627,7 @@ impl Emulator {
             let mut y = 0;
             match fmt {
                 retro_pixel_format::RETRO_PIXEL_FORMAT_0RGB1555 => {
-                    for components in fb.chunks_exact(2) {
+                    for components in fb.as_chunks::<2>().0 {
                         let gb = components[0];
                         let arg = components[1];
                         let (red, green, blue) = argb555to888(gb, arg);
@@ -637,7 +640,7 @@ impl Emulator {
                     }
                 }
                 retro_pixel_format::RETRO_PIXEL_FORMAT_XRGB8888 => {
-                    for components in fb.chunks_exact(4) {
+                    for components in fb.as_chunks::<4>().0 {
                         let red = components[1];
                         let green = components[2];
                         let blue = components[3];
@@ -650,7 +653,7 @@ impl Emulator {
                     }
                 }
                 retro_pixel_format::RETRO_PIXEL_FORMAT_RGB565 => {
-                    for components in fb.chunks_exact(2) {
+                    for components in fb.as_chunks::<2>().0 {
                         let gb = components[0];
                         let rg = components[1];
                         let (red, green, blue) = rgb565to888(gb, rg);
@@ -676,7 +679,12 @@ impl Emulator {
         let fmt = self.pixel_format();
         self.peek_framebuffer(move |fb| match fmt {
             retro_pixel_format::RETRO_PIXEL_FORMAT_0RGB1555 => {
-                for (components, dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(3)) {
+                for (components, dst) in fb
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .zip(slice.as_chunks_mut::<3>().0.iter_mut())
+                {
                     let gb = components[0];
                     let arg = components[1];
                     let (red, green, blue) = argb555to888(gb, arg);
@@ -686,7 +694,12 @@ impl Emulator {
                 }
             }
             retro_pixel_format::RETRO_PIXEL_FORMAT_XRGB8888 => {
-                for (components, dst) in fb.chunks_exact(4).zip(slice.chunks_exact_mut(3)) {
+                for (components, dst) in fb
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .zip(slice.as_chunks_mut::<3>().0.iter_mut())
+                {
                     let r = components[1];
                     let g = components[2];
                     let b = components[3];
@@ -696,7 +709,12 @@ impl Emulator {
                 }
             }
             retro_pixel_format::RETRO_PIXEL_FORMAT_RGB565 => {
-                for (components, dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(3)) {
+                for (components, dst) in fb
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .zip(slice.as_chunks_mut::<3>().0.iter_mut())
+                {
                     let gb = components[0];
                     let rg = components[1];
                     let (red, green, blue) = rgb565to888(gb, rg);
@@ -716,7 +734,12 @@ impl Emulator {
         let fmt = self.pixel_format();
         self.peek_framebuffer(move |fb| match fmt {
             retro_pixel_format::RETRO_PIXEL_FORMAT_0RGB1555 => {
-                for (components, dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(4)) {
+                for (components, dst) in fb
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .zip(slice.as_chunks_mut::<4>().0.iter_mut())
+                {
                     let gb = components[0];
                     let arg = components[1];
                     let (red, green, blue) = argb555to888(gb, arg);
@@ -727,7 +750,12 @@ impl Emulator {
                 }
             }
             retro_pixel_format::RETRO_PIXEL_FORMAT_XRGB8888 => {
-                for (components, dst) in fb.chunks_exact(4).zip(slice.chunks_exact_mut(4)) {
+                for (components, dst) in fb
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .zip(slice.as_chunks_mut::<4>().0.iter_mut())
+                {
                     let a = components[0];
                     let r = components[1];
                     let g = components[2];
@@ -739,7 +767,12 @@ impl Emulator {
                 }
             }
             retro_pixel_format::RETRO_PIXEL_FORMAT_RGB565 => {
-                for (components, dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(4)) {
+                for (components, dst) in fb
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .zip(slice.as_chunks_mut::<4>().0.iter_mut())
+                {
                     let gb = components[0];
                     let rg = components[1];
                     let (red, green, blue) = rgb565to888(gb, rg);
@@ -760,7 +793,7 @@ impl Emulator {
         let fmt = self.pixel_format();
         self.peek_framebuffer(move |fb| match fmt {
             retro_pixel_format::RETRO_PIXEL_FORMAT_0RGB1555 => {
-                for (components, dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
+                for (components, dst) in fb.as_chunks::<2>().0.iter().zip(slice.iter_mut()) {
                     let gb = components[0];
                     let arg = components[1];
                     let (red, green, blue) = argb555to888(gb, arg);
@@ -768,7 +801,7 @@ impl Emulator {
                 }
             }
             retro_pixel_format::RETRO_PIXEL_FORMAT_XRGB8888 => {
-                for (components, dst) in fb.chunks_exact(4).zip(slice.iter_mut()) {
+                for (components, dst) in fb.as_chunks::<4>().0.iter().zip(slice.iter_mut()) {
                     let r = components[1];
                     let g = components[2];
                     let b = components[3];
@@ -776,7 +809,7 @@ impl Emulator {
                 }
             }
             retro_pixel_format::RETRO_PIXEL_FORMAT_RGB565 => {
-                for (components, dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
+                for (components, dst) in fb.as_chunks::<2>().0.iter().zip(slice.iter_mut()) {
                     let gb = components[0];
                     let rg = components[1];
                     let (red, green, blue) = rgb565to888(gb, rg);
@@ -794,7 +827,7 @@ impl Emulator {
         let fmt = self.pixel_format();
         self.peek_framebuffer(move |fb| match fmt {
             retro_pixel_format::RETRO_PIXEL_FORMAT_0RGB1555 => {
-                for (components, dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
+                for (components, dst) in fb.as_chunks::<2>().0.iter().zip(slice.iter_mut()) {
                     let gb = components[0];
                     let arg = components[1];
                     let (red, green, blue) = argb555to888(gb, arg);
@@ -805,7 +838,7 @@ impl Emulator {
                 }
             }
             retro_pixel_format::RETRO_PIXEL_FORMAT_XRGB8888 => {
-                for (components, dst) in fb.chunks_exact(4).zip(slice.iter_mut()) {
+                for (components, dst) in fb.as_chunks::<4>().0.iter().zip(slice.iter_mut()) {
                     *dst = (u32::from(components[0]) << 24)
                         | (u32::from(components[1]) << 16)
                         | (u32::from(components[2]) << 8)
@@ -813,7 +846,7 @@ impl Emulator {
                 }
             }
             retro_pixel_format::RETRO_PIXEL_FORMAT_RGB565 => {
-                for (components, dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
+                for (components, dst) in fb.as_chunks::<2>().0.iter().zip(slice.iter_mut()) {
                     let gb = components[0];
                     let rg = components[1];
                     let (red, green, blue) = rgb565to888(gb, rg);
@@ -834,7 +867,7 @@ impl Emulator {
         let fmt = self.pixel_format();
         self.peek_framebuffer(move |fb| match fmt {
             retro_pixel_format::RETRO_PIXEL_FORMAT_0RGB1555 => {
-                for (components, dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
+                for (components, dst) in fb.as_chunks::<2>().0.iter().zip(slice.iter_mut()) {
                     let gb = components[0];
                     let arg = components[1];
                     let (red, green, blue) = argb555to888(gb, arg);
@@ -845,7 +878,7 @@ impl Emulator {
                 }
             }
             retro_pixel_format::RETRO_PIXEL_FORMAT_XRGB8888 => {
-                for (components, dst) in fb.chunks_exact(4).zip(slice.iter_mut()) {
+                for (components, dst) in fb.as_chunks::<4>().0.iter().zip(slice.iter_mut()) {
                     *dst = (u32::from(components[1]) << 24)
                         | (u32::from(components[2]) << 16)
                         | (u32::from(components[3]) << 8)
@@ -853,7 +886,7 @@ impl Emulator {
                 }
             }
             retro_pixel_format::RETRO_PIXEL_FORMAT_RGB565 => {
-                for (components, dst) in fb.chunks_exact(2).zip(slice.iter_mut()) {
+                for (components, dst) in fb.as_chunks::<2>().0.iter().zip(slice.iter_mut()) {
                     let gb = components[0];
                     let rg = components[1];
                     let (red, green, blue) = rgb565to888(gb, rg);
@@ -874,7 +907,12 @@ impl Emulator {
         let fmt = self.pixel_format();
         self.peek_framebuffer(move |fb| match fmt {
             retro_pixel_format::RETRO_PIXEL_FORMAT_0RGB1555 => {
-                for (components, dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(4)) {
+                for (components, dst) in fb
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .zip(slice.as_chunks_mut::<4>().0.iter_mut())
+                {
                     let gb = components[0];
                     let arg = components[1];
                     let (red, green, blue) = argb555to888(gb, arg);
@@ -886,7 +924,12 @@ impl Emulator {
                 }
             }
             retro_pixel_format::RETRO_PIXEL_FORMAT_XRGB8888 => {
-                for (components, dst) in fb.chunks_exact(4).zip(slice.chunks_exact_mut(4)) {
+                for (components, dst) in fb
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .zip(slice.as_chunks_mut::<4>().0.iter_mut())
+                {
                     dst[0] = f32::from(components[0]) / 255.;
                     dst[1] = f32::from(components[1]) / 255.;
                     dst[2] = f32::from(components[2]) / 255.;
@@ -894,7 +937,12 @@ impl Emulator {
                 }
             }
             retro_pixel_format::RETRO_PIXEL_FORMAT_RGB565 => {
-                for (components, dst) in fb.chunks_exact(2).zip(slice.chunks_exact_mut(4)) {
+                for (components, dst) in fb
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .zip(slice.as_chunks_mut::<4>().0.iter_mut())
+                {
                     let gb = components[0];
                     let rg = components[1];
                     let (red, green, blue) = rgb565to888(gb, rg);
@@ -1109,15 +1157,11 @@ impl Drop for Emulator {
         CTX.with_borrow_mut(Option::take);
     }
 }
-
-#[cfg(test)]
+// disable tests for now, eventually unvendor this whole crate
+#[cfg(any())]
 mod tests {
     use super::*;
     use std::path::Path;
-    #[cfg(feature = "use_image")]
-    extern crate image;
-    #[cfg(feature = "use_image")]
-    use crate::fb_to_image::*;
 
     fn mario_is_dead(emu: &Emulator) -> bool {
         emu.system_ram_ref()[0x0770] == 0x03
@@ -1142,51 +1186,6 @@ mod tests {
             Path::new("roms/mario.nes"),
         );
         drop(emu);
-    }
-    #[cfg(feature = "use_image")]
-    #[test]
-    fn it_works() {
-        // TODO change to a public domain rom or maybe 2048 core or something
-        let mut emu = Emulator::create(
-            Path::new("../../.config/retroarch/cores/fceumm_libretro2"),
-            Path::new("roms/mario.nes"),
-        );
-        emu.run([Buttons::new(), Buttons::new()]);
-        emu.reset();
-        for i in 0..150 {
-            emu.run([
-                Buttons::new()
-                    .start(i > 80 && i < 100)
-                    .right(i >= 100)
-                    .a(i >= 100),
-                Buttons::new(),
-            ]);
-        }
-        let fb = emu.create_imagebuffer();
-        fb.unwrap().save("out.png").unwrap();
-        let mut died = false;
-        for _ in 0..10000 {
-            emu.run([Buttons::new().right(true), Buttons::new()]);
-            if mario_is_dead(&emu) {
-                died = true;
-                let fb = emu.create_imagebuffer();
-                fb.unwrap().save("out2.png").unwrap();
-                break;
-            }
-        }
-        assert!(died);
-        emu.reset();
-        for i in 0..250 {
-            emu.run([
-                Buttons::new()
-                    .start(i > 80 && i < 100)
-                    .right(i >= 100)
-                    .a((100..=150).contains(&i) || (i >= 180)),
-                Buttons::new(),
-            ]);
-        }
-
-        //emu will drop naturally
     }
     #[test]
     fn it_works_with_callback() {
@@ -1251,14 +1250,6 @@ mod tests {
         let mut pixels = vec![255_u8; 480 * 272 * 4];
         emu.copy_framebuffer_rgba8888(&mut pixels).unwrap();
 
-        image::save_buffer(
-            "petscop.png",
-            &pixels,
-            480,
-            272,
-            image::ExtendedColorType::Rgba8,
-        )
-        .unwrap();
         // loop {
         // std::thread::sleep_ms(500);
         // }

@@ -1,5 +1,5 @@
 use crate::gfx::Gfx;
-use rust_libretro_sys::{retro_hw_context_type, retro_hw_render_callback, retro_system_av_info};
+use gisst_rust_libretro_sys::{retro_hw_context_type, retro_hw_render_callback, retro_system_av_info};
 use surfman::{Connection, ContextAttributeFlags, ContextAttributes, GLVersion};
 use surfman::{SurfaceAccess, SurfaceType};
 
@@ -13,7 +13,7 @@ pub fn get_proc_address_r(proc: &str) -> *const std::ffi::c_void {
 }
 pub unsafe extern "C" fn get_proc_address(
     proc: *const std::ffi::c_char,
-) -> rust_libretro_sys::retro_proc_address_t {
+) -> gisst_rust_libretro_sys::retro_proc_address_t {
     // dbg!(std::thread::current().id());
     unsafe {
         let proc_str = std::ffi::CStr::from_ptr(proc).to_str().unwrap();
@@ -23,22 +23,22 @@ pub unsafe extern "C" fn get_proc_address(
 pub unsafe extern "C" fn get_current_framebuffer() -> usize {
     // dbg!(std::thread::current().id());
     let ctx = GFX.lock().unwrap();
-    ctx.as_ref().map_or(0, |ctx| ctx.get_fbo())
+    ctx.as_ref().map_or(0, GlGfxData::get_fbo) as usize
 }
 
 struct GlGfxData {
-    w: i32,
-    h: i32,
+    w: u32,
+    h: u32,
     context: surfman::Context,
     device: surfman::Device,
     surface: Option<surfman::Surface>,
     fbo: u32,
 }
 impl GlGfxData {
-    fn get_fbo(&self) -> usize {
-        self.fbo as usize
+    fn get_fbo(&self) -> u32 {
+        self.fbo
     }
-    fn create(w: i32, h: i32, version_major: u8, version_minor: u8) -> Option<Self> {
+    fn create(w: u32, h: u32, version_major: u8, version_minor: u8) -> Option<Self> {
         // dbg!(std::thread::current().id());
         let Ok(connection) = Connection::new() else {
             println!("Could not create connection");
@@ -48,7 +48,7 @@ impl GlGfxData {
             println!("Could not obtain adapter");
             return None;
         };
-        let Ok(mut device) = connection.create_device(&adapter) else {
+        let Ok(device) = connection.create_device(&adapter) else {
             println!("Could not create device");
             return None;
         };
@@ -69,6 +69,8 @@ impl GlGfxData {
             return None;
         };
         gl::load_with(|s| device.get_proc_address(&context, s));
+        assert!(w < (i32::MAX as u32), "Framebuffer width too large");
+        assert!(h < (i32::MAX as u32), "Framebuffer height too large");
         let mut ret = Self {
             w,
             h,
@@ -90,7 +92,7 @@ impl GlGfxData {
                 &self.context,
                 SurfaceAccess::GPUOnly,
                 SurfaceType::Generic {
-                    size: euclid::Size2D::new(self.w, self.h),
+                    size: euclid::Size2D::new(self.w.cast_signed(), self.h.cast_signed()),
                 },
             )
             .ok();
@@ -110,13 +112,15 @@ impl GlGfxData {
             self.fbo = 0;
         }
     }
-    fn set_dimensions(&mut self, w: i32, h: i32) {
+    fn set_dimensions(&mut self, w: u32, h: u32) {
         if w == self.w && h == self.h && self.surface.is_some() {
             return;
         }
         self.destroy_surface();
         self.w = w;
         self.h = h;
+        assert!(self.w < (i32::MAX as u32), "Framebuffer width too large");
+        assert!(self.h < (i32::MAX as u32), "Framebuffer height too large");
         self.create_surface();
     }
     fn bind(&mut self) {
@@ -144,34 +148,58 @@ impl GlGfxData {
         }
     }
     fn sync_framebuffer(&mut self, fb: &mut [u8]) {
-        println!("Fb size {}", fb.len());
         unsafe {
             self.bind();
             let fbo = self.get_fbo();
-            println!("Existing err {:x}, fbo {fbo}", gl::GetError());
+            if let e = gl::GetError()
+                && e != 0
+            {
+                println!("Existing err {e:?}, fbo {fbo}");
+            }
             // gl::Flush();
-            gl::BindFramebuffer(gl::FRAMEBUFFER, fbo as u32);
-            println!("glBF err {:x}", gl::GetError());
+            gl::BindFramebuffer(gl::FRAMEBUFFER, fbo);
+            if let e = gl::GetError()
+                && e != 0
+            {
+                println!("glBindFramebuffer err {e:?}");
+            }
             gl::PixelStorei(gl::PACK_ALIGNMENT, 4);
-            println!("glPSi err {:x}", gl::GetError());
+            if let e = gl::GetError()
+                && e != 0
+            {
+                println!("glPixelStorei err {e:?}");
+            }
             gl::PixelStorei(gl::PACK_ROW_LENGTH, 0);
-            println!("glPSi err {:x}", gl::GetError());
+            if let e = gl::GetError()
+                && e != 0
+            {
+                println!("glPixelStorei err {e:?}");
+            }
             gl::BindBuffer(gl::PIXEL_PACK_BUFFER, 0);
-            println!("glBB err {:x}", gl::GetError());
+            if let e = gl::GetError()
+                && e != 0
+            {
+                println!("glBindBuffer err {e:?}");
+            }
             gl::ReadBuffer(gl::BACK);
-            println!("glRB err {:x}", gl::GetError());
+            if let e = gl::GetError()
+                && e != 0
+            {
+                println!("glReadBuffer err {e:?}");
+            }
             gl::ReadPixels(
                 0,
                 0,
-                self.w,
-                self.h,
+                self.w.cast_signed(), // w > 0, w not bigger than 2^31
+                self.h.cast_signed(),
                 gl::RGBA,
                 gl::UNSIGNED_BYTE,
                 fb.as_mut_ptr().cast(),
             );
-            for pix in fb.chunks_exact_mut(4) {
+            for pix in fb.as_chunks_mut::<4>().0 {
                 assert_eq!(pix.len(), 4);
                 pix.swap(0, 3);
+
                 pix.swap(1, 2);
             }
             for line in 0..(self.h as usize / 2) {
@@ -189,7 +217,11 @@ impl GlGfxData {
                     .unwrap();
                 l0.swap_with_slice(l_n);
             }
-            println!("glReadPixels err {:x}", gl::GetError());
+            if let e = gl::GetError()
+                && e != 0
+            {
+                println!("glReadPixels err {e:?}");
+            }
             // self.unbind();
         }
     }
@@ -208,8 +240,8 @@ impl Drop for GlGfxData {
 }
 #[derive(Default)]
 pub struct GlGfx {
-    context_reset: rust_libretro_sys::retro_hw_context_reset_t,
-    context_destroy: rust_libretro_sys::retro_hw_context_reset_t,
+    context_reset: gisst_rust_libretro_sys::retro_hw_context_reset_t,
+    context_destroy: gisst_rust_libretro_sys::retro_hw_context_reset_t,
 }
 
 impl Gfx for GlGfx {
@@ -217,14 +249,6 @@ impl Gfx for GlGfx {
         retro_hw_context_type::RETRO_HW_CONTEXT_OPENGL
     }
     fn video_refresh(&mut self, w: u32, h: u32, _p: usize) {
-        let Ok(w) = i32::try_from(w) else {
-            println!("Bad width {w}");
-            return;
-        };
-        let Ok(h) = i32::try_from(h) else {
-            println!("Bad height {h}");
-            return;
-        };
         let mut lock = GFX.lock().unwrap();
         let ctx = lock.as_mut().unwrap();
         let changed = if ctx.w != w || ctx.h != h {
@@ -256,8 +280,8 @@ impl Gfx for GlGfx {
             println!("Tried to load unsupported gfx context type {ctype:?}");
             return false;
         }
-        let w = i32::try_from(av.geometry.max_width).unwrap_or(-1);
-        let h = i32::try_from(av.geometry.max_height).unwrap_or(-1);
+        let w = av.geometry.max_width;
+        let h = av.geometry.max_height;
         let mut lock = GFX.lock().unwrap();
         let ctx = GlGfxData::create(
             w,
@@ -268,7 +292,6 @@ impl Gfx for GlGfx {
         let success = ctx.is_some();
         let _ = std::mem::replace(&mut *lock, ctx);
         drop(lock);
-        println!("Created ctx");
         cb.bottom_left_origin = false;
         cb.cache_context = true;
         cb.get_proc_address = Some(get_proc_address);

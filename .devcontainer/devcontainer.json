@@ -1,0 +1,11 @@
+{
+  "name": "retro-rs",
+  "image": "mcr.microsoft.com/devcontainers/rust:latest",
+  "customizations": {},
+  "workspaceFolder": "/workspace/",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+  "remoteEnv": {
+    "HOST_PROJECT_PATH": "${localWorkspaceFolder}"
+  },
+  "postCreateCommand": ""
+}

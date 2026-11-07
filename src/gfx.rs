@@ -1,4 +1,4 @@
-use rust_libretro_sys::{retro_hw_context_type, retro_hw_render_callback, retro_system_av_info};
+use gisst_rust_libretro_sys::{retro_hw_context_type, retro_hw_render_callback, retro_system_av_info};
 
 pub trait Gfx {
     fn preferred_api(&self) -> retro_hw_context_type;
