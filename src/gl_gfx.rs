@@ -250,7 +250,7 @@ impl Gfx for GlGfx {
     }
     fn video_refresh(&mut self, w: u32, h: u32, _p: usize) {
         let mut lock = GFX.lock().unwrap();
-        let ctx = lock.as_mut().unwrap();
+        let Some(ctx) = lock.as_mut() else { return; };
         let changed = if ctx.w != w || ctx.h != h {
             ctx.set_dimensions(w, h);
             true
@@ -302,7 +302,7 @@ impl Gfx for GlGfx {
     }
     fn destroy_context(&mut self) {
         let mut lock = GFX.lock().unwrap();
-        let ctx = lock.as_mut().unwrap();
+        let Some(ctx) = lock.as_mut() else { return; };
         ctx.destroy_surface();
         if let Err(e) = ctx.device.destroy_context(&mut ctx.context) {
             println!("Error destroying context {e:?}");
@@ -310,17 +310,17 @@ impl Gfx for GlGfx {
     }
     fn bind(&mut self) {
         let mut lock = GFX.lock().unwrap();
-        let ctx = lock.as_mut().unwrap();
+        let Some(ctx) = lock.as_mut() else { return; };
         ctx.bind();
     }
     fn unbind(&mut self) {
         let mut lock = GFX.lock().unwrap();
-        let ctx = lock.as_mut().unwrap();
+        let Some(ctx) = lock.as_mut() else { return; };
         ctx.unbind();
     }
     fn sync_framebuffer(&self, fb: &mut [u8]) {
         let mut lock = GFX.lock().unwrap();
-        let ctx = lock.as_mut().unwrap();
+        let Some(ctx) = lock.as_mut() else { return; };
         ctx.sync_framebuffer(fb);
     }
 }

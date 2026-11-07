@@ -1157,12 +1157,10 @@ impl Drop for Emulator {
         CTX.with_borrow_mut(Option::take);
     }
 }
-// disable tests for now, eventually unvendor this whole crate
-#[cfg(any())]
 mod tests {
     use super::*;
-    use std::path::Path;
 
+    #[allow(unused)]
     fn mario_is_dead(emu: &Emulator) -> bool {
         emu.system_ram_ref()[0x0770] == 0x03
     }
@@ -1177,12 +1175,12 @@ mod tests {
     fn create_drop_create() {
         // TODO change to a public domain rom or maybe 2048 core or something
         let mut emu = Emulator::create(
-            Path::new("../../.config/retroarch/cores/fceumm_libretro"),
+            Path::new("cores/fceumm_libretro"),
             Path::new("roms/mario.nes"),
         );
         drop(emu);
         emu = Emulator::create(
-            Path::new("../../.config/retroarch/cores/fceumm_libretro1"),
+            Path::new("cores/fceumm_libretro1"),
             Path::new("roms/mario.nes"),
         );
         drop(emu);
@@ -1190,9 +1188,10 @@ mod tests {
     #[test]
     fn it_works_with_callback() {
         // TODO change to a public domain rom or maybe 2048 core or something
-        let mut emu = Emulator::create(
-            Path::new("../../.config/retroarch/cores/fceumm_libretro3"),
+        let mut emu = Emulator::create_with_gfx(
+            Path::new("cores/fceumm_libretro3"),
             Path::new("roms/mario.nes"),
+            Box::new(crate::GlGfx::default()),
         );
         emu.run([Buttons::new(), Buttons::new()]);
         emu.reset();
