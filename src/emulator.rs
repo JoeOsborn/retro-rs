@@ -966,7 +966,6 @@ unsafe extern "C" fn callback_environment(cmd: u32, data: *mut c_void) -> bool {
                     RETRO_ENVIRONMENT_SET_CONTROLLER_INFO => true,
                     RETRO_ENVIRONMENT_SET_PIXEL_FORMAT => {
                         let pixfmt = unsafe { *(data as *const retro_pixel_format) };
-                        dbg!(pixfmt);
                         ctx.image_depth = match pixfmt {
                             retro_pixel_format::RETRO_PIXEL_FORMAT_0RGB1555 => 15,
                             retro_pixel_format::RETRO_PIXEL_FORMAT_XRGB8888 => 32,
@@ -1084,10 +1083,6 @@ extern "C" fn callback_video_refresh(data: *const c_void, width: u32, height: u3
                             )));
                         }
                         ctx.pixfmt = retro_pixel_format::RETRO_PIXEL_FORMAT_XRGB8888;
-                        println!(
-                            "real size is {height} * {pitch} = {}",
-                            height as usize * pitch
-                        );
                         ctx.frame_ptr =
                             Box::leak(vec![255; height as usize * pitch].into_boxed_slice())
                                 .as_ptr()
@@ -1130,7 +1125,7 @@ extern "C" fn callback_input_state(port: u32, device: u32, index: u32, id: u32) 
     // Can't panic
     if port > 1 || device != 1 || index != 0 {
         // Unsupported port/device/index
-        // println!("Unsupported port/device/index {port}/{device}/{index}");
+        // eprintln!("Unsupported port/device/index {port}/{device}/{index}");
         return 0;
     }
     let bitmask_enabled = (device == RETRO_DEVICE_JOYPAD) && (id == RETRO_DEVICE_ID_JOYPAD_MASK);

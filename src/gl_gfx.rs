@@ -41,15 +41,15 @@ impl GlGfxData {
     fn create(w: u32, h: u32, version_major: u8, version_minor: u8) -> Option<Self> {
         // dbg!(std::thread::current().id());
         let Ok(connection) = Connection::new() else {
-            println!("Could not create connection");
+            eprintln!("Could not create connection");
             return None;
         };
         let Ok(adapter) = connection.create_adapter() else {
-            println!("Could not obtain adapter");
+            eprintln!("Could not obtain adapter");
             return None;
         };
         let Ok(device) = connection.create_device(&adapter) else {
-            println!("Could not create device");
+            eprintln!("Could not create device");
             return None;
         };
         let attributes = ContextAttributes {
@@ -57,15 +57,15 @@ impl GlGfxData {
             flags: ContextAttributeFlags::DEPTH | ContextAttributeFlags::STENCIL,
         };
         let Ok(context_descriptor) = device.create_context_descriptor(&attributes) else {
-            println!("Failed to create context descriptor");
+            eprintln!("Failed to create context descriptor");
             return None;
         };
         let Ok(context) = device.create_context(&context_descriptor, None) else {
-            println!("Failed to create context");
+            eprintln!("Failed to create context");
             return None;
         };
         let Ok(()) = device.make_context_current(&context) else {
-            println!("Failed to make context current");
+            eprintln!("Failed to make context current");
             return None;
         };
         gl::load_with(|s| device.get_proc_address(&context, s));
@@ -154,38 +154,38 @@ impl GlGfxData {
             if let e = gl::GetError()
                 && e != 0
             {
-                println!("Existing err {e:?}, fbo {fbo}");
+                eprintln!("Existing err {e:?}, fbo {fbo}");
             }
             // gl::Flush();
             gl::BindFramebuffer(gl::FRAMEBUFFER, fbo);
             if let e = gl::GetError()
                 && e != 0
             {
-                println!("glBindFramebuffer err {e:?}");
+                eprintln!("glBindFramebuffer err {e:?}");
             }
             gl::PixelStorei(gl::PACK_ALIGNMENT, 4);
             if let e = gl::GetError()
                 && e != 0
             {
-                println!("glPixelStorei err {e:?}");
+                eprintln!("glPixelStorei err {e:?}");
             }
             gl::PixelStorei(gl::PACK_ROW_LENGTH, 0);
             if let e = gl::GetError()
                 && e != 0
             {
-                println!("glPixelStorei err {e:?}");
+                eprintln!("glPixelStorei err {e:?}");
             }
             gl::BindBuffer(gl::PIXEL_PACK_BUFFER, 0);
             if let e = gl::GetError()
                 && e != 0
             {
-                println!("glBindBuffer err {e:?}");
+                eprintln!("glBindBuffer err {e:?}");
             }
             gl::ReadBuffer(gl::BACK);
             if let e = gl::GetError()
                 && e != 0
             {
-                println!("glReadBuffer err {e:?}");
+                eprintln!("glReadBuffer err {e:?}");
             }
             gl::ReadPixels(
                 0,
@@ -220,7 +220,7 @@ impl GlGfxData {
             if let e = gl::GetError()
                 && e != 0
             {
-                println!("glReadPixels err {e:?}");
+                eprintln!("glReadPixels err {e:?}");
             }
             // self.unbind();
         }
@@ -234,7 +234,7 @@ impl Drop for GlGfxData {
         self.unbind();
         self.destroy_surface();
         if let Err(e) = self.device.destroy_context(&mut self.context) {
-            println!("Error destroying context {e:?}");
+            eprintln!("Error destroying context {e:?}");
         }
     }
 }
@@ -277,7 +277,7 @@ impl Gfx for GlGfx {
         if ctype == retro_hw_context_type::RETRO_HW_CONTEXT_VULKAN
             || ctype == retro_hw_context_type::RETRO_HW_CONTEXT_DIRECT3D
         {
-            println!("Tried to load unsupported gfx context type {ctype:?}");
+            eprintln!("Tried to load unsupported gfx context type {ctype:?}");
             return false;
         }
         let w = av.geometry.max_width;
@@ -305,7 +305,7 @@ impl Gfx for GlGfx {
         let Some(ctx) = lock.as_mut() else { return; };
         ctx.destroy_surface();
         if let Err(e) = ctx.device.destroy_context(&mut ctx.context) {
-            println!("Error destroying context {e:?}");
+            eprintln!("Error destroying context {e:?}");
         }
     }
     fn bind(&mut self) {
